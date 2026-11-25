@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usuários e acessos · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Administração · Tela: Usuários e acessos + popup "Editar usuário" com permissões (REQ 01 – Manter Usuário) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Usuários e acessos</h1>
+          <p class="sub">Quem acessa o sistema e o que cada perfil pode fazer</p>
+        </div>
+        <button class="btn btn-primario" id="btnNovo">Novo usuário</button>
+      </header>
+
+      <section class="card">
+        <div class="filtros">
+          <input class="busca" id="busca" type="search" placeholder="Buscar por nome ou e-mail" aria-label="Buscar por nome ou e-mail">
+          <select id="filtroPerfil" aria-label="Filtrar por perfil">
+            <option value="">Todos os perfis</option>
+            <option value="administrador">Administrador</option>
+            <option value="recepcionista">Recepcionista</option>
+            <option value="veterinario">Veterinário</option>
+          </select>
+          <select id="filtroStatus" aria-label="Filtrar por status">
+            <option value="">Todos os status</option>
+            <option value="true">Ativo</option>
+            <option value="false">Inativo</option>
+          </select>
+        </div>
+        <div class="tabela-wrap">
+          <table class="tabela">
+            <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Último acesso</th><th>Ações</th></tr></thead>
+            <tbody id="tbody"><tr><td colspan="6" class="vazio">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="rodape-tabela" id="rodape"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const usuario = exigirLogin("usuarios");
+    montarLayout(usuario, "usuarios");
+
+    const PERFIS = [["administrador", "Administrador"], ["recepcionista", "Recepcionista"], ["veterinario", "Veterinário"]];
+    const nomePerfil = (p) => (PERFIS.find((x) => x[0] === p) || [p, p])[1];
+    const POR_PAGINA = 7;
+    const $ = (id) => document.getElementById(id);
+    let lista = [], pagina = 1, modulos = [], padrao = {};
+    const ACOES = [["ver", "Visualizar"], ["editar", "Criar e editar"], ["excluir", "Excluir"]];
+
+    async function carregar() {
+      try {
+        lista = await api("/usuarios", { query: { q: $("busca").value.trim(), perfil: $("filtroPerfil").value, ativo: $("filtroStatus").value } });
+        render();
+      } catch (e) { toast(e.message, "erro"); }
+    }
+
+    function render() {
+      const total = lista.length;
+      pagina = Math.min(pagina, Math.max(1, Math.ceil(total / POR_PAGINA)));
+      const visiveis = lista.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA);
+      $("tbody").innerHTML = visiveis.length ? visiveis.map((u) => `
+        <tr>
+          <td class="destaque">${escapar(u.nome)}</td>
+          <td>${escapar(u.email)}</td>
+          <td>${badge(nomePerfil(u.perfil), u.perfil === "administrador" ? "verde" : "")}</td>
+          <td>${u.ativo ? badge("Ativo", "verde") : badge("Inativo", "vermelho")}</td>
+          <td>${quando(u.ultimo_acesso)}</td>
+          <td><div class="acoes">
+            ${pode("usuarios", "editar") ? `
+              <button class="link-acao" data-acao="editar" data-id="${u.id}">Editar</button>
+              ${u.id !== usuario.id ? `<button class="link-acao" data-acao="status" data-id="${u.id}">${u.ativo ? "Desativar" : "Reativar"}</button>` : ""}` : ""}
+          </div></td>
+        </tr>`).join("") : `<tr><td colspan="6" class="vazio">Nenhum usuário encontrado.</td></tr>`;
+      renderPaginacao($("rodape"), { pagina, tamanho: POR_PAGINA, total }, (p) => { pagina = p; render(); });
+    }
+
+    $("tbody").onclick = async (e) => {
+      const b = e.target.closest("button[data-acao]");
+      if (!b) return;
+      const u = lista.find((x) => x.id === Number(b.dataset.id));
+      try {
+        if (b.dataset.acao === "editar") return abrirFormulario(u);
+        if (b.dataset.acao === "status") {
+          await api(`/usuarios/${u.id}/status`, { method: "PATCH", body: { ativo: !u.ativo } });
+          toast(u.ativo ? "Usuário desativado." : "Usuário reativado.");
+        }
+        carregar();
+      } catch (err) { toast(err.message, "erro"); }
+    };
+
+    /* ---------- Popup "Editar usuário" (perfil, status e permissões ajustáveis) ---------- */
+    function tabelaPermissoes(perms) {
+      return `<h3>Permissões do perfil (ajustáveis)</h3>
+        <div class="tabela-wrap"><table class="tabela tabela-permissoes">
+          <thead><tr><th>Módulo</th>${ACOES.map(([, t]) => `<th>${t}</th>`).join("")}</tr></thead>
+          <tbody>${modulos.map(([m, nome]) => `<tr><td>${escapar(nome)}</td>${ACOES.map(([a, t]) => `
+            <td><label class="alvo-toque"><input type="checkbox" data-mod="${m}" data-acao="${a}" aria-label="${escapar(nome)} — ${t}" ${perms && perms[m] && perms[m][a] ? "checked" : ""}></label></td>`).join("")}</tr>`).join("")}
+          </tbody></table></div>`;
+    }
+
+    function abrirFormulario(u) {
+      const proprio = u && u.id === usuario.id;
+      const campos = [
+        { nome: "nome", rotulo: "Nome completo", obrigatorio: true },
+        { nome: "email", rotulo: "E-mail", tipo: "email", obrigatorio: true },
+        { nome: "perfil", rotulo: "Perfil", tipo: "select", opcoes: PERFIS, placeholder: "Selecione", obrigatorio: true },
+        { nome: "ativo", rotulo: "Status", tipo: "select", opcoes: [["true", "Ativo"], ["false", "Inativo"]], attrs: proprio ? "disabled" : "" },
+      ];
+      if (!u) campos.push({ nome: "senha", rotulo: "Senha inicial", tipo: "password", obrigatorio: true, min: 6,
+        dica: "Mínimo de 6 caracteres", largura: "inteira", attrs: 'autocomplete="new-password"' });
+
+      abrirModal({
+        titulo: u ? "Editar usuário" : "Novo usuário",
+        subtitulo: "Escolha o perfil (Administrador, Recepcionista ou Veterinário) e ajuste as permissões.",
+        campos,
+        valores: u ? { ...u, ativo: String(u.ativo) } : { ativo: "true" },
+        htmlDepois: tabelaPermissoes(u ? u.permissoes : null),
+        textoSalvar: "Salvar usuário",
+        botoesExtras: u && !proprio && pode("usuarios", "excluir") ? [{
+          texto: "Excluir usuário", classe: "btn-perigo",
+          aoClicar: async (fechar) => {
+            if (!confirm(`Excluir o usuário ${u.nome}? Esta ação não pode ser desfeita.`)) return;
+            await api(`/usuarios/${u.id}`, { method: "DELETE" });
+            toast("Usuário excluído."); fechar(); carregar();
+          },
+        }] : [],
+        aoAbrir: (form) => {
+          const caixas = [...form.querySelectorAll("[data-mod]")];
+          const caixa = (m, a) => caixas.find((c) => c.dataset.mod === m && c.dataset.acao === a);
+          // Trocar o perfil aplica as permissões padrão dele (depois dá para ajustar)
+          form.elements.perfil.onchange = () => {
+            const p = padrao[form.elements.perfil.value] || {};
+            caixas.forEach((c) => (c.checked = !!(p[c.dataset.mod] && p[c.dataset.mod][c.dataset.acao])));
+          };
+          // Coerência: criar/editar ou excluir exige visualizar
+          caixas.forEach((c) => c.addEventListener("change", () => {
+            const m = c.dataset.mod;
+            if (c.dataset.acao !== "ver" && c.checked) caixa(m, "ver").checked = true;
+            if (c.dataset.acao === "ver" && !c.checked) { caixa(m, "editar").checked = false; caixa(m, "excluir").checked = false; }
+          }));
+          if (proprio) caixa("usuarios", "editar").disabled = caixa("usuarios", "ver").disabled = true;
+        },
+        aoSalvar: async (dados, form) => {
+          const permissoes = {};
+          form.querySelectorAll("[data-mod]").forEach((c) => {
+            permissoes[c.dataset.mod] = permissoes[c.dataset.mod] || {};
+            permissoes[c.dataset.mod][c.dataset.acao] = c.checked;
+          });
+          const corpo = { ...dados, ativo: proprio ? true : dados.ativo !== "false", permissoes };
+          if (u) await api(`/usuarios/${u.id}`, { method: "PUT", body: corpo });
+          else await api("/usuarios", { method: "POST", body: corpo });
+          toast(u ? "Usuário atualizado." : "Usuário cadastrado.");
+          carregar();
+        },
+      });
+    }
+
+    $("btnNovo").onclick = () => abrirFormulario(null);
+    $("btnNovo").hidden = !pode("usuarios", "editar");
+    $("busca").oninput = debounce(() => { pagina = 1; carregar(); });
+    $("filtroPerfil").onchange = $("filtroStatus").onchange = () => { pagina = 1; carregar(); };
+    api("/usuarios/permissoes-padrao").then((r) => { modulos = r.modulos; padrao = r.padrao; }).catch((e) => toast(e.message, "erro"));
+    carregar();
+  </script>
+</body>
+</html>

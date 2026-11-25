@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agenda · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Agendamento · Tela: Agenda (REQ 09) + popups "Novo agendamento" (REQ 07) e "Cancelar consulta" (REQ 08) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Agenda</h1>
+          <p class="sub" id="periodo"></p>
+          <div class="agenda-nav">
+            <button class="btn btn-icone" id="btnAnt" aria-label="Período anterior">‹</button>
+            <button class="btn btn-icone" id="btnHoje">Hoje</button>
+            <button class="btn btn-icone" id="btnProx" aria-label="Próximo período">›</button>
+          </div>
+        </div>
+        <div class="topo-acoes">
+          <div class="segmentado" role="group" aria-label="Visualização" id="modos">
+            <button data-modo="dia">Dia</button><button data-modo="semana" class="ativo" aria-pressed="true">Semana</button><button data-modo="profissional">Profissional</button>
+          </div>
+          <select id="filtroVet" aria-label="Filtrar por veterinário" style="width:auto;min-width:220px"><option value="">Todos os veterinários</option></select>
+          <button class="btn btn-laranja" id="btnNovo">Novo agendamento</button>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="legenda" id="legenda"></div>
+        <div class="agenda" id="grade" aria-live="polite"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const usuario = exigirLogin("agenda");
+    montarLayout(usuario, "agenda");
+    const $ = (id) => document.getElementById(id);
+
+    const H_INI = 8, H_FIM = 18, PX_HORA = 96; // 96px/hora: um bloco de 30 min tem 44px (alvo de toque mínimo do guia)
+    const CORES = [
+      { borda: "#299994", fundo: "#d5f2f0" }, { borda: "#ec830f", fundo: "#fde7cf" },
+      { borda: "#f6b21b", fundo: "#fff1c4" }, { borda: "#1e6767", fundo: "#e4eeed" },
+    ];
+    const TIPOS = ["Consulta", "Retorno", "Vacina", "Cirurgia", "Exame"];
+
+    let modo = "semana", ref = new Date(), vets = [], animais = [], ags = [];
+    ref.setHours(0, 0, 0, 0);
+
+    const inicioSemana = (d) => somarDias(d, -((d.getDay() + 6) % 7));
+    const corVet = (id) => CORES[Math.max(0, vets.findIndex((v) => v.id === id)) % CORES.length];
+    const atendeSabado = () => vets.some((v) => v.ativo && v.horarios.some((h) => h.dia === "Sábado" && h.ativo));
+
+    /** Semana: carrega Seg–Dom; Sábado aparece se alguém atende, Domingo só se houver agendamento. */
+    function diasVisiveis() {
+      if (modo !== "semana") return [new Date(ref)];
+      const s = inicioSemana(ref);
+      return Array.from({ length: 7 }, (_, i) => somarDias(s, i));
+    }
+    const temEvento = (d) => ags.some((a) => mesmoDia(new Date(a.data_hora), d));
+    const diasNaTela = () => diasVisiveis().filter((d, i) => i < 5 || (i === 5 && (atendeSabado() || temEvento(d))) || (i === 6 && temEvento(d)));
+
+    async function carregar() {
+      const dias = diasVisiveis();
+      try {
+        ags = await api("/agendamentos", { query: {
+          data_inicio: isoData(dias[0]), data_fim: isoData(dias[dias.length - 1]),
+          veterinario_id: modo === "profissional" ? "" : $("filtroVet").value,
+        } });
+        render();
+      } catch (e) { toast(e.message, "erro"); }
+    }
+
+    /** Distribui eventos sobrepostos lado a lado na mesma coluna. */
+    function distribuir(lista) {
+      const ordenada = [...lista].sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
+      const fins = [];
+      ordenada.forEach((a) => {
+        const ini = +new Date(a.data_hora), fim = ini + a.duracao_min * 60000;
+        let faixa = fins.findIndex((f) => f <= ini);
+        if (faixa < 0) { faixa = fins.length; fins.push(fim); } else fins[faixa] = fim;
+        a._faixa = faixa;
+      });
+      ordenada.forEach((a) => (a._n = Math.max(fins.length, 1)));
+      return ordenada;
+    }
+
+    function eventoHTML(a) {
+      const d = new Date(a.data_hora);
+      const top = ((d.getHours() - H_INI) * 60 + d.getMinutes()) / 60 * PX_HORA;
+      const altura = Math.max((a.duracao_min / 60) * PX_HORA - 4, 24);
+      const c = corVet(a.veterinario_id);
+      const largura = `(100% - 8px) / ${a._n}`;
+      const rotulo = `${horaBR(a.data_hora)} ${a.animal_nome} · ${a.tipo}`;
+      return `<button class="evento ${a.status === "cancelado" ? "cancelado" : ""}" data-id="${a.id}"
+        style="top:${top + 2}px;height:${altura}px;left:calc(4px + ${largura} * ${a._faixa});width:calc(${largura} - 3px);--cor:${c.borda};--fundo-ev:${c.fundo}"
+        title="${escapar(rotulo)} — ${escapar(a.tutor_nome)} — ${escapar(a.veterinario_nome)} (${STATUS_AGENDAMENTO[a.status][0]})"
+        aria-label="${escapar(rotulo)}, ${escapar(a.veterinario_nome)}, ${STATUS_AGENDAMENTO[a.status][0]}">${escapar(rotulo)}</button>`;
+    }
+
+    function render() {
+      const hoje = new Date();
+      const dias = diasNaTela();
+      let colunas;
+      if (modo === "profissional") {
+        const lista = vets.filter((v) => v.ativo && (!$("filtroVet").value || v.id === Number($("filtroVet").value)));
+        colunas = lista.map((v) => ({ titulo: v.nome, filtro: (a) => a.veterinario_id === v.id }));
+      } else {
+        colunas = dias.map((d) => ({
+          titulo: capitalizar(d.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "")) + " " + d.getDate() + (mesmoDia(d, hoje) ? " (hoje)" : ""),
+          hoje: mesmoDia(d, hoje),
+          filtro: (a) => mesmoDia(new Date(a.data_hora), d),
+        }));
+      }
+
+      const s = dias[0], f = dias[dias.length - 1];
+      $("periodo").textContent = modo === "semana"
+        ? `${s.getDate()} a ${f.getDate()} de ${f.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}`
+        : dataExtenso(ref);
+
+      $("legenda").innerHTML = vets.filter((v) => v.ativo).map((v) => `<span><i style="background:${corVet(v.id).borda}"></i>${escapar(v.nome)}</span>`).join("");
+
+      const horas = Array.from({ length: H_FIM - H_INI }, (_, i) => `<div class="agenda-hora">${zero(H_INI + i)}:00</div>`).join("");
+      $("grade").style.setProperty("--cols", colunas.length || 1);
+      $("grade").innerHTML = `<div class="agenda-cab"></div>
+        ${colunas.map((c) => `<div class="agenda-cab ${c.hoje ? "hoje" : ""}">${escapar(c.titulo)}</div>`).join("")}
+        <div class="agenda-horas">${horas}</div>
+        ${colunas.map((c) => `<div class="agenda-col" style="height:${(H_FIM - H_INI) * PX_HORA}px">${distribuir(ags.filter(c.filtro)).map(eventoHTML).join("")}</div>`).join("")}`;
+    }
+
+    /* ---------- Popup "Novo agendamento" / editar ---------- */
+    const DURACAO_POR_TIPO = { Consulta: 30, Retorno: 30, Vacina: 30, Exame: 30, Cirurgia: 60 };
+    const DIA_SEMANA = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
+    function abrirFormulario(a) {
+      const finalizado = a && ["concluido", "cancelado"].includes(a.status);
+      const podeEditar = pode("agenda", "editar") && !finalizado;
+      // Tutores que têm animais (lista ordenada, sem repetição)
+      const tutores = [...new Map(animais.map((x) => [x.tutor_id, x.tutor_nome])).entries()].sort((x, y) => x[1].localeCompare(y[1]));
+      const padraoData = a ? isoData(new Date(a.data_hora)) : isoData(ref < new Date(new Date().toDateString()) ? new Date() : ref);
+
+      const extras = [];
+      if (a && podeEditar) extras.push({ texto: "Cancelar consulta", classe: "btn-perigo", aoClicar: (fechar) => { fechar(); abrirCancelamento(a); } });
+      if (a && pode("agenda", "excluir")) extras.push({ texto: "Excluir", classe: "btn-perigo", aoClicar: async (fechar) => {
+        if (!confirm("Excluir definitivamente este agendamento?")) return;
+        await api(`/agendamentos/${a.id}`, { method: "DELETE" });
+        toast("Agendamento excluído."); fechar(); carregar();
+      } });
+
+      let subtitulo = "Vincule o animal, o tutor, o veterinário, a data e o horário.";
+      if (a && a.status === "cancelado") subtitulo = `Cancelado · ${a.cancelamento_motivo || "sem motivo"}${a.cancelamento_justificativa ? " — " + a.cancelamento_justificativa : ""}`;
+      else if (a) subtitulo = `Status: ${STATUS_AGENDAMENTO[a.status][0]}`;
+
+      abrirModal({
+        titulo: a ? (podeEditar ? "Editar agendamento" : "Agendamento") : "Novo agendamento",
+        subtitulo,
+        campos: [
+          { nome: "tutor_id", rotulo: "Tutor", tipo: "select", obrigatorio: true, largura: "inteira", placeholder: "Selecione o tutor", opcoes: tutores },
+          { nome: "animal_id", rotulo: "Animal", tipo: "select", obrigatorio: true, opcoes: [] },
+          { nome: "veterinario_id", rotulo: "Veterinário", tipo: "select", obrigatorio: true, placeholder: "Selecione",
+            opcoes: vets.filter((v) => v.ativo || (a && v.id === a.veterinario_id)).map((v) => [v.id, v.nome]) },
+          { nome: "tipo", rotulo: "Tipo de atendimento", tipo: "select", obrigatorio: true, opcoes: TIPOS.map((t) => [t, t]) },
+          { nome: "data", rotulo: "Data", tipo: "date", obrigatorio: true, attrs: podeEditar ? `min="${isoData(new Date())}"` : "" },
+          { nome: "hora", rotulo: "Horário", tipo: "select", obrigatorio: true, opcoes: [] },
+          { nome: "observacoes", rotulo: "Observações", tipo: "textarea", largura: "inteira" },
+        ],
+        valores: a ? { ...a, data: padraoData } : { data: padraoData, tipo: "Consulta", veterinario_id: $("filtroVet").value },
+        textoSalvar: a ? "Salvar alterações" : "Confirmar agendamento",
+        classeSalvar: "btn-laranja",
+        botoesExtras: extras,
+        aoAbrir: (form) => {
+          const el = form.elements;
+          const preencherAnimais = (selecionado) => {
+            const lista = animais.filter((x) => x.tutor_id === Number(el.tutor_id.value));
+            if (lista.length === 1) selecionado = lista[0].id;
+            el.animal_id.innerHTML = `<option value="">${el.tutor_id.value ? "Selecione o animal" : "Escolha o tutor primeiro"}</option>`
+              + opcoes(lista.map((x) => [x.id, x.nome]), selecionado);
+          };
+          // Busca na API só os horários livres do veterinário naquele dia
+          const preencherHorarios = async (selecionado) => {
+            if (!el.veterinario_id.value || !el.data.value) {
+              el.hora.innerHTML = `<option value="">Escolha veterinário e data</option>`;
+              return;
+            }
+            el.hora.innerHTML = `<option value="">Carregando…</option>`;
+            try {
+              const r = await api("/agendamentos/disponibilidade", { query: {
+                veterinario_id: el.veterinario_id.value, data: el.data.value,
+                duracao_min: DURACAO_POR_TIPO[el.tipo.value] || 30, ignorar_id: a ? a.id : "",
+              } });
+              let horas = r.horarios;
+              const atual = a && isoData(new Date(a.data_hora)) === el.data.value ? horaBR(a.data_hora) : null;
+              if (atual && !horas.includes(atual)) horas = [atual, ...horas].sort();
+              el.hora.innerHTML = horas.length
+                ? `<option value="">Selecione</option>` + opcoes(horas.map((h) => [h, h]), selecionado)
+                : `<option value="">${escapar(r.mensagem || "Sem horários livres")}</option>`;
+            } catch (e) {
+              el.hora.innerHTML = `<option value="">Não foi possível carregar</option>`;
+            }
+          };
+          preencherAnimais(a ? a.animal_id : null);
+          preencherHorarios(a ? horaBR(a.data_hora) : null);
+          el.tutor_id.onchange = () => preencherAnimais();
+          el.veterinario_id.onchange = el.data.onchange = el.tipo.onchange = () => preencherHorarios(el.hora.value);
+          if (!podeEditar && a) form.querySelectorAll("input, select, textarea").forEach((x) => (x.disabled = true));
+        },
+        aoSalvar: (!a || podeEditar) && pode("agenda", "editar") ? async (d) => {
+          const corpo = {
+            animal_id: Number(d.animal_id), veterinario_id: Number(d.veterinario_id), tipo: d.tipo,
+            data_hora: `${d.data}T${d.hora}`, duracao_min: DURACAO_POR_TIPO[d.tipo] || 30, observacoes: d.observacoes,
+          };
+          if (a) await api(`/agendamentos/${a.id}`, { method: "PUT", body: corpo });
+          else await api("/agendamentos", { method: "POST", body: corpo });
+          toast(a ? "Agendamento atualizado." : "Consulta agendada!");
+          ref = new Date(d.data + "T00:00");
+          carregar();
+        } : null,
+      });
+    }
+
+    /* ---------- Popup "Cancelar consulta" ---------- */
+    const MOTIVOS = ["Cancelada pelo tutor", "Cancelada pela clínica", "Tutor não compareceu", "Remarcada"];
+    function abrirCancelamento(a) {
+      const d = new Date(a.data_hora);
+      abrirModal({
+        titulo: "Cancelar consulta",
+        subtitulo: "Esta ação libera o horário na agenda.",
+        largura: "estreita",
+        htmlExtra: `<div class="resumo-box">
+            <strong>${escapar(a.animal_nome)} · Tutor(a) ${escapar(a.tutor_nome)}</strong>
+            <span>${DIA_SEMANA[d.getDay()]}, ${zero(d.getDate())}/${zero(d.getMonth() + 1)} · ${horaBR(d)} · ${escapar(a.veterinario_nome)}</span>
+          </div>`,
+        campos: [
+          { nome: "motivo", rotulo: "Status do cancelamento", tipo: "select", obrigatorio: true, largura: "inteira", opcoes: MOTIVOS.map((m) => [m, m]) },
+          { nome: "justificativa", rotulo: "Justificativa", tipo: "textarea", obrigatorio: true, largura: "inteira", attrs: 'minlength="3"' },
+        ],
+        textoSalvar: "Confirmar cancelamento",
+        classeSalvar: "btn-vermelho",
+        aoSalvar: async (dados) => {
+          await api(`/agendamentos/${a.id}/cancelamento`, { method: "POST", body: dados });
+          toast("Consulta cancelada. O horário foi liberado.");
+          carregar();
+        },
+      });
+    }
+
+    /* ---------- Eventos da tela ---------- */
+    $("grade").onclick = (e) => {
+      const b = e.target.closest(".evento");
+      if (b) abrirFormulario(ags.find((a) => a.id === Number(b.dataset.id)));
+    };
+    $("modos").onclick = (e) => {
+      const b = e.target.closest("[data-modo]"); if (!b) return;
+      modo = b.dataset.modo;
+      $("modos").querySelectorAll("button").forEach((x) => { x.classList.toggle("ativo", x === b); x.setAttribute("aria-pressed", x === b); });
+      carregar();
+    };
+    const passo = () => (modo === "semana" ? 7 : 1);
+    $("btnAnt").onclick = () => { ref = somarDias(ref, -passo()); carregar(); };
+    $("btnProx").onclick = () => { ref = somarDias(ref, passo()); carregar(); };
+    $("btnHoje").onclick = () => { ref = new Date(); ref.setHours(0, 0, 0, 0); carregar(); };
+    $("filtroVet").onchange = carregar;
+    $("btnNovo").onclick = () => abrirFormulario(null);
+    $("btnNovo").hidden = !pode("agenda", "editar");
+
+    (async () => {
+      try {
+        [vets, { itens: animais }] = await Promise.all([api("/veterinarios"), api("/animais", { query: { tamanho: 500 } })]);
+        $("filtroVet").innerHTML += opcoes(vets.filter((v) => v.ativo).map((v) => [v.id, v.nome]));
+      } catch (e) { return toast(e.message, "erro"); }
+      await carregar();
+      if (parametro("novo") && pode("agenda", "editar")) abrirFormulario(null);
+    })();
+  </script>
+</body>
+</html>

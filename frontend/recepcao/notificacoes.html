@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Central de notificações · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Recepção · Tela: Central de notificações
+       Fora da Sprint 1: lembretes de consulta são gerados a partir dos agendamentos reais (REQ 07);
+       o envio (WhatsApp/e-mail) é simulado e salvo no navegador. -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Central de notificações</h1>
+          <p class="sub">Lembretes automáticos para os tutores</p>
+        </div>
+        <button class="btn btn-primario" id="btnEnviar">Enviar selecionadas</button>
+      </header>
+      <p class="aviso-mock">Envio simulado — a integração com WhatsApp/e-mail está prevista para uma próxima sprint.</p>
+
+      <div class="segmentado" role="tablist" aria-label="Tipo de notificação" id="abas" style="margin-bottom:24px">
+        <button role="tab" data-aba="consultas" class="ativo" aria-selected="true">Consultas agendadas</button>
+        <button role="tab" data-aba="vacinas" aria-selected="false">Vacinas a vencer</button>
+        <button role="tab" data-aba="historico" aria-selected="false">Histórico</button>
+      </div>
+
+      <section class="card">
+        <div class="tabela-wrap">
+          <table class="tabela">
+            <thead><tr><th><span class="sr-only">Selecionar</span></th><th>Tutor</th><th>Animal</th><th>Assunto</th><th>Envio</th><th>Canal</th><th>Status</th></tr></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Disparo automático</h2>
+        <div style="display:flex;flex-wrap:wrap;gap:16px 40px" id="config">
+          <label class="check"><input type="checkbox" data-cfg="lembrete24h"> Lembrete 24 h antes da consulta</label>
+          <label class="check"><input type="checkbox" data-cfg="vacina7d"> Aviso 7 dias antes do vencimento da vacina</label>
+          <label class="check"><input type="checkbox" data-cfg="whatsapp"> Enviar por WhatsApp</label>
+          <label class="check"><input type="checkbox" data-cfg="email"> Enviar por e-mail</label>
+        </div>
+        <button class="btn" id="btnSalvarCfg" style="margin-top:22px">Salvar configurações</button>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/mock.js"></script>
+  <script>
+    const usuario = exigirLogin("agenda");
+    montarLayout(usuario, "notificacoes");
+    const $ = (id) => document.getElementById(id);
+    let aba = "consultas", linhas = [];
+    const fmt = (d) => `${zero(d.getDate())}/${zero(d.getMonth() + 1)} ${horaBR(d)}`;
+
+    async function montarConsultas() {
+      const hoje = new Date();
+      const ags = await api("/agendamentos", { query: { data_inicio: isoData(hoje), data_fim: isoData(somarDias(hoje, 7)), status: "agendado,confirmado" } });
+      const enviadas = Local.ler("notificacoes_enviadas", []);
+      return ags.map((a, i) => {
+        const envio = new Date(new Date(a.data_hora).getTime() - 24 * 3600 * 1000);
+        const chave = "ag" + a.id;
+        const status = enviadas.includes(chave) ? ["Enviada", "verde"] : envio < hoje ? ["Pendente", "vermelho"] : ["Agendada", "laranja"];
+        return { chave, tutor: a.tutor_nome, animal: a.animal_nome, assunto: `Lembrete de consulta · ${fmt(new Date(a.data_hora))}`,
+          envio: fmt(envio), canal: i % 3 === 1 ? "E-mail" : "WhatsApp", status };
+      });
+    }
+
+    function montarVacinas() {
+      const enviadas = Local.ler("notificacoes_enviadas", []);
+      return MOCK.vacinasAVencer.map((v, i) => {
+        const chave = "vac" + i;
+        return { ...v, chave, envio: "Hoje 08:00", status: enviadas.includes(chave) ? ["Enviada", "verde"] : ["Agendada", "laranja"] };
+      });
+    }
+
+    async function render() {
+      try {
+        if (aba === "consultas") linhas = await montarConsultas();
+        else if (aba === "vacinas") linhas = montarVacinas();
+        else linhas = Local.ler("notificacoes_historico", []).map((h) => ({ ...h, status: ["Enviada", "verde"], semCheck: true }));
+      } catch (e) { return toast(e.message, "erro"); }
+      $("btnEnviar").hidden = aba === "historico";
+      $("tbody").innerHTML = linhas.length ? linhas.map((l, i) => `
+        <tr>
+          <td>${l.semCheck ? "" : `<label class="alvo-toque"><input type="checkbox" data-i="${i}" aria-label="Selecionar ${escapar(l.tutor)}" ${l.status[0] === "Enviada" ? "disabled" : ""}></label>`}</td>
+          <td class="destaque">${escapar(l.tutor)}</td><td>${escapar(l.animal)}</td><td>${escapar(l.assunto)}</td>
+          <td style="white-space:nowrap">${escapar(l.envio)}</td><td>${escapar(l.canal)}</td><td>${badge(...l.status)}</td>
+        </tr>`).join("") : `<tr><td colspan="7" class="vazio">Nada por aqui.</td></tr>`;
+    }
+
+    $("abas").onclick = (e) => {
+      const b = e.target.closest("[data-aba]"); if (!b) return;
+      aba = b.dataset.aba;
+      $("abas").querySelectorAll("button").forEach((x) => { x.classList.toggle("ativo", x === b); x.setAttribute("aria-selected", x === b); });
+      render();
+    };
+
+    $("btnEnviar").onclick = () => {
+      const marcadas = [...document.querySelectorAll("#tbody input:checked")].map((c) => linhas[Number(c.dataset.i)]);
+      if (!marcadas.length) return toast("Selecione ao menos uma notificação.", "erro");
+      const enviadas = Local.ler("notificacoes_enviadas", []);
+      const historico = Local.ler("notificacoes_historico", []);
+      marcadas.forEach((l) => {
+        enviadas.push(l.chave);
+        historico.unshift({ tutor: l.tutor, animal: l.animal, assunto: l.assunto, envio: fmt(new Date()), canal: l.canal });
+      });
+      Local.gravar("notificacoes_enviadas", enviadas);
+      Local.gravar("notificacoes_historico", historico.slice(0, 50));
+      toast(`${marcadas.length} notificação(ões) enviada(s).`);
+      render();
+    };
+
+    const cfg = Local.ler("notificacoes_config", {});
+    document.querySelectorAll("[data-cfg]").forEach((c) => (c.checked = !!cfg[c.dataset.cfg]));
+    $("btnSalvarCfg").onclick = () => {
+      const novo = {};
+      document.querySelectorAll("[data-cfg]").forEach((c) => (novo[c.dataset.cfg] = c.checked));
+      Local.gravar("notificacoes_config", novo);
+      toast("Configurações salvas.");
+    };
+    render();
+  </script>
+</body>
+</html>

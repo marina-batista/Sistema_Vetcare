@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tutores · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Recepção · Tela: Tutores + popup "Editar tutor" (REQ 04 – Manter Tutor) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Tutores</h1>
+          <p class="sub" id="contagem">&nbsp;</p>
+        </div>
+        <button class="btn btn-primario" id="btnNovo">Novo tutor</button>
+      </header>
+
+      <section class="card">
+        <div class="filtros">
+          <input class="busca" id="busca" type="search" placeholder="Buscar por nome, telefone ou e-mail" aria-label="Buscar por nome, telefone ou e-mail">
+          <select id="situacao" aria-label="Filtrar tutores">
+            <option value="">Todos os tutores</option>
+            <option value="com_animais">Com animais</option>
+            <option value="sem_animais">Sem animais</option>
+          </select>
+        </div>
+        <div class="tabela-wrap">
+          <table class="tabela">
+            <thead><tr><th>Nome</th><th>Telefone</th><th>E-mail</th><th>Animais</th><th>Última visita</th><th>Ações</th></tr></thead>
+            <tbody id="tbody"><tr><td colspan="6" class="vazio">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="rodape-tabela" id="rodape"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const usuario = exigirLogin("tutores_animais");
+    montarLayout(usuario, "tutores");
+    const $ = (id) => document.getElementById(id);
+    const TAMANHO = 7;
+    let pagina = 1, itens = [];
+    $("busca").value = parametro("q") || "";
+
+    async function carregar() {
+      try {
+        const r = await api("/tutores", { query: { q: $("busca").value.trim(), situacao: $("situacao").value, pagina, tamanho: TAMANHO } });
+        itens = r.itens;
+        if (!$("busca").value && !$("situacao").value) $("contagem").textContent = `${r.total} tutores cadastrados`;
+        $("tbody").innerHTML = itens.length ? itens.map((t) => `
+          <tr>
+            <td class="destaque">${escapar(t.nome)}</td>
+            <td style="white-space:nowrap">${escapar(t.telefone)}</td>
+            <td>${escapar(t.email || "—")}</td>
+            <td>${t.qtd_animais}</td>
+            <td>${dataBR(t.ultima_visita)}</td>
+            <td><div class="acoes">
+              ${pode("tutores_animais", "editar") ? `<button class="link-acao" data-id="${t.id}">Editar</button>` : ""}
+              <a class="link-acao" href="/recepcao/animais.html?tutor_id=${t.id}">Ver animais</a>
+            </div></td>
+          </tr>`).join("") : `<tr><td colspan="6" class="vazio">Nenhum tutor encontrado.</td></tr>`;
+        renderPaginacao($("rodape"), r, (p) => { pagina = p; carregar(); });
+      } catch (e) { toast(e.message, "erro"); }
+    }
+
+    /* Popup "Editar tutor" (Figma) — o mesmo formulário abre em branco para cadastrar */
+    function abrirFormulario(t) {
+      const extras = t && pode("tutores_animais", "excluir") ? [{
+        texto: "Excluir tutor", classe: "btn-perigo",
+        aoClicar: async (fechar) => {
+          if (!confirm(`Excluir o tutor ${t.nome}?`)) return;
+          await api(`/tutores/${t.id}`, { method: "DELETE" });
+          toast("Tutor excluído."); fechar(); carregar();
+        },
+      }] : [];
+      abrirModal({
+        titulo: t ? "Editar tutor" : "Novo tutor",
+        subtitulo: t ? "Atualize os dados do tutor. Para cadastrar um novo, o formulário abre em branco."
+                     : "Preencha os dados do tutor responsável pelos animais.",
+        campos: [
+          { nome: "nome", rotulo: "Nome completo", obrigatorio: true, largura: "inteira" },
+          { nome: "cpf", rotulo: "CPF", mascara: "cpf", dica: "000.000.000-00" },
+          { nome: "telefone", rotulo: "Telefone", tipo: "tel", mascara: "telefone", obrigatorio: true, dica: "(71) 90000-0000" },
+          { nome: "email", rotulo: "E-mail", tipo: "email", largura: "inteira", dica: "nome@email.com" },
+          { nome: "cep", rotulo: "CEP", mascara: "cep", dica: "00000-000" },
+          { nome: "endereco", rotulo: "Endereço" },
+          { nome: "numero", rotulo: "Número" },
+          { nome: "bairro", rotulo: "Bairro" },
+          { nome: "cidade", rotulo: "Cidade", largura: "inteira" },
+        ],
+        valores: t || {},
+        textoSalvar: "Salvar tutor",
+        botoesExtras: extras,
+        aoAbrir: (form) => {
+          // Ao completar o CEP, preenche endereço, bairro e cidade pelo ViaCEP (serviço gratuito dos Correios)
+          form.elements.cep.addEventListener("input", async (e) => {
+            const cep = e.target.value.replace(/\D/g, "");
+            if (cep.length !== 8) return;
+            try {
+              const r = await (await fetch(`https://viacep.com.br/ws/${cep}/json/`)).json();
+              if (r.erro) return;
+              form.elements.endereco.value = r.logradouro || form.elements.endereco.value;
+              form.elements.bairro.value = r.bairro || form.elements.bairro.value;
+              form.elements.cidade.value = r.localidade || form.elements.cidade.value;
+              form.elements.numero.focus();
+            } catch { /* sem internet: preenchimento manual */ }
+          });
+        },
+        aoSalvar: async (dados) => {
+          if (t) await api(`/tutores/${t.id}`, { method: "PUT", body: dados });
+          else await api("/tutores", { method: "POST", body: dados });
+          toast(t ? "Tutor atualizado." : "Tutor cadastrado.");
+          carregar();
+        },
+      });
+    }
+
+    $("tbody").onclick = (e) => {
+      const b = e.target.closest("button[data-id]");
+      if (b) abrirFormulario(itens.find((x) => x.id === Number(b.dataset.id)));
+    };
+    $("btnNovo").hidden = !pode("tutores_animais", "editar");
+
+    $("btnNovo").onclick = () => abrirFormulario(null);
+    $("busca").oninput = debounce(() => { pagina = 1; carregar(); });
+    $("situacao").onchange = () => { pagina = 1; carregar(); };
+    carregar();
+    if (parametro("novo")) abrirFormulario(null);
+  </script>
+</body>
+</html>

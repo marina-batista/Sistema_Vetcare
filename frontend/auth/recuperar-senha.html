@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recuperar senha · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Tela: Recuperar senha (REQ 03) -->
+  <div class="auth">
+    <div class="auth-padrao" aria-hidden="true"></div>
+    <main class="auth-lado">
+      <div class="auth-logo"><img src="/assets/logo.svg" alt="VetCare"></div>
+
+      <form class="auth-card" id="form">
+        <h1>Recuperar senha</h1>
+        <p class="sub">Informe seu e-mail para receber um código de recuperação e criar uma nova senha.</p>
+
+        <div class="campo">
+          <label class="rotulo" for="email">E-mail</label>
+          <input id="email" type="email" placeholder="voce@email.com" autocomplete="email" required>
+        </div>
+        <button type="button" class="btn btn-bloco" id="btnEnviar">Enviar código</button>
+        <p class="msg-ok" id="msgEnvio" role="status"></p>
+
+        <div class="campo" style="margin-top:18px">
+          <label class="rotulo" for="codigo">Código de recuperação</label>
+          <input id="codigo" inputmode="numeric" pattern="\d{6}" maxlength="6" placeholder="Insira o código recebido por e-mail" required>
+        </div>
+        <div class="campo">
+          <label class="rotulo" for="nova">Nova senha</label>
+          <div class="campo-senha">
+            <input id="nova" type="password" minlength="6" placeholder="Digite a nova senha" autocomplete="new-password" required>
+            <button type="button" class="olho" data-olho="nova"></button>
+          </div>
+        </div>
+        <div class="campo">
+          <label class="rotulo" for="confirmar">Confirmar nova senha</label>
+          <div class="campo-senha">
+            <input id="confirmar" type="password" minlength="6" placeholder="Repita a nova senha" autocomplete="new-password" required>
+            <button type="button" class="olho" data-olho="confirmar"></button>
+          </div>
+        </div>
+
+        <button class="btn btn-primario btn-bloco" type="submit">Entrar</button>
+        <p class="erro-form" id="erro" role="alert"></p>
+        <p class="centro"><a class="link-forte" href="/auth/login.html">Voltar para o login</a></p>
+      </form>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    ativarOlhoSenha();
+    const $ = (id) => document.getElementById(id);
+    const erro = $("erro");
+
+    $("btnEnviar").onclick = async () => {
+      erro.textContent = "";
+      if (!$("email").reportValidity()) return;
+      $("btnEnviar").disabled = true;
+      try {
+        const r = await api("/auth/recuperar-senha", { method: "POST", body: { email: $("email").value.trim() } });
+        // Em desenvolvimento não há servidor de e-mail: o código é impresso no terminal do uvicorn (ADR 012)
+        $("msgEnvio").textContent = r.mensagem + " (Ambiente de testes: veja o código no terminal do servidor.)";
+        $("codigo").focus();
+      } catch (err) {
+        erro.textContent = err.message;
+      } finally {
+        $("btnEnviar").disabled = false;
+      }
+    };
+
+    $("form").onsubmit = async (e) => {
+      e.preventDefault();
+      erro.textContent = "";
+      if ($("nova").value !== $("confirmar").value) {
+        erro.textContent = "As senhas não coincidem.";
+        return;
+      }
+      const email = $("email").value.trim();
+      try {
+        await api("/auth/redefinir-senha", {
+          method: "POST",
+          body: { email, codigo: $("codigo").value.trim(), nova_senha: $("nova").value },
+        });
+        // Senha trocada: já entra no sistema
+        const r = await api("/auth/login", { method: "POST", body: { email, senha: $("nova").value } });
+        salvarSessao(r.token, r.usuario, false);
+        location.href = paginaInicial(r.usuario);
+      } catch (err) {
+        erro.textContent = err.message;
+      }
+    };
+  </script>
+</body>
+</html>

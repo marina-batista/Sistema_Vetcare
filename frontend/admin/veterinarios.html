@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Veterinários · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Administração · Tela: Veterinários (REQ 06 – Manter Veterinário) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Veterinários</h1>
+          <p class="sub">CRMV, especialidade e horários de atendimento</p>
+        </div>
+        <button class="btn btn-primario" id="btnNovo">Novo veterinário</button>
+      </header>
+
+      <div class="grid-lista-form">
+        <section class="card">
+          <h2>Profissionais</h2>
+          <ul class="lista-prof" id="lista"><li class="vazio">Carregando…</li></ul>
+        </section>
+
+        <form class="card" id="form">
+          <h2 id="tituloForm">Editar profissional</h2>
+          <div class="grade-form">
+            <div><label class="rotulo" for="nome">Nome completo</label><input id="nome" required minlength="2"></div>
+            <div><label class="rotulo" for="crmv">CRMV</label><input id="crmv" required placeholder="CRMV-BA 00000"></div>
+            <div><label class="rotulo" for="especialidade">Especialidade</label><select id="especialidade" required></select></div>
+            <div><label class="rotulo" for="telefone">Telefone</label><input id="telefone" type="tel" placeholder="(71) 90000-0000"></div>
+            <div class="inteira">
+              <label class="rotulo" for="email">E-mail</label>
+              <input id="email" type="email" placeholder="nome@vetcare.com" aria-describedby="dicaEmail">
+              <small id="dicaEmail" class="sub">Use o mesmo e-mail do usuário de login para liberar a “Fila do dia”.</small>
+            </div>
+          </div>
+
+          <h3 style="margin:24px 0 14px;font-size:16px">Horários de atendimento</h3>
+          <div class="horarios" id="horarios"></div>
+
+          <p class="erro-form" id="erro" role="alert"></p>
+          <div class="botoes-form">
+            <label class="check esquerda"><input type="checkbox" id="ativo"> Profissional ativo</label>
+            <button type="button" class="btn btn-perigo" id="btnExcluir">Excluir</button>
+            <button type="button" class="btn" id="btnCancelar">Cancelar</button>
+            <button type="submit" class="btn btn-primario">Salvar veterinário</button>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const usuario = exigirLogin("usuarios");
+    montarLayout(usuario, "veterinarios");
+
+    const $ = (id) => document.getElementById(id);
+    const DIAS = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+    const ESPECIALIDADES = ["Clínica geral", "Cirurgia", "Dermatologia", "Felinos", "Ortopedia", "Cardiologia", "Oftalmologia", "Animais silvestres"];
+    let vets = [], atual = null;
+
+    $("especialidade").innerHTML = opcoes(ESPECIALIDADES.map((e) => [e, e]));
+    $("horarios").innerHTML = DIAS.map((d, i) => `
+      <span class="dia" id="dia${i}">${d}</span>
+      <input type="time" id="ini${i}" aria-label="${d} — início">
+      <input type="time" id="fim${i}" aria-label="${d} — fim">
+      <label class="alvo-toque"><input type="checkbox" id="at${i}" aria-label="Atende ${d}"></label>`).join("");
+
+    async function carregar(selecionarId) {
+      try {
+        vets = await api("/veterinarios");
+        const alvo = vets.find((v) => v.id === selecionarId) || (atual && vets.find((v) => v.id === atual.id)) || vets[0];
+        preencher(alvo || null);
+      } catch (e) { toast(e.message, "erro"); }
+    }
+
+    function renderLista() {
+      $("lista").innerHTML = vets.length ? vets.map((v) => `
+        <li><button type="button" class="prof ${atual && atual.id === v.id ? "ativo" : ""}" data-id="${v.id}" ${atual && atual.id === v.id ? 'aria-current="true"' : ""}>
+          <span class="avatar grande" aria-hidden="true">${inicial(v.nome)}</span>
+          <span class="prof-info"><strong>${escapar(v.nome)}</strong><small>${escapar(v.crmv)} · ${escapar(v.especialidade)}</small></span>
+          ${v.ativo ? badge("Ativo", "verde") : badge("Inativo")}
+        </button></li>`).join("") : `<li class="vazio">Nenhum profissional cadastrado.</li>`;
+    }
+
+    function preencher(v) {
+      atual = v;
+      $("tituloForm").textContent = v ? "Editar profissional" : "Novo profissional";
+      $("nome").value = v?.nome || "";
+      $("crmv").value = v?.crmv || "";
+      $("especialidade").value = v?.especialidade || ESPECIALIDADES[0];
+      $("telefone").value = v?.telefone || "";
+      $("email").value = v?.email || "";
+      $("ativo").checked = v ? v.ativo : true;
+      DIAS.forEach((d, i) => {
+        const h = (v?.horarios || []).find((x) => x.dia === d) || { inicio: "08:00", fim: "12:00", ativo: !v && i < 5 };
+        $(`ini${i}`).value = h.inicio; $(`fim${i}`).value = h.fim; $(`at${i}`).checked = h.ativo;
+      });
+      if ($("btnExcluir")) $("btnExcluir").hidden = !v;
+      $("erro").textContent = "";
+      renderLista();
+    }
+
+    $("lista").onclick = (e) => {
+      const b = e.target.closest("[data-id]");
+      if (b) preencher(vets.find((v) => v.id === Number(b.dataset.id)));
+    };
+    $("btnNovo").onclick = () => { preencher(null); $("nome").focus(); };
+    $("btnCancelar").onclick = () => preencher(atual ? vets.find((v) => v.id === atual.id) : vets[0] || null);
+
+    if ($("btnExcluir")) $("btnExcluir").onclick = async () => {
+      if (!atual || !confirm(`Excluir ${atual.nome}?`)) return;
+      try {
+        await api(`/veterinarios/${atual.id}`, { method: "DELETE" });
+        toast("Profissional excluído.");
+        atual = null;
+        carregar();
+      } catch (err) { $("erro").textContent = err.message; }
+    };
+
+    $("form").onsubmit = async (e) => {
+      e.preventDefault();
+      $("erro").textContent = "";
+      const corpo = {
+        nome: $("nome").value.trim(),
+        crmv: $("crmv").value.trim(),
+        especialidade: $("especialidade").value,
+        telefone: $("telefone").value.trim() || null,
+        email: $("email").value.trim() || null,
+        ativo: $("ativo").checked,
+        horarios: DIAS.map((dia, i) => ({ dia, inicio: $(`ini${i}`).value, fim: $(`fim${i}`).value, ativo: $(`at${i}`).checked })),
+      };
+      try {
+        const salvo = atual
+          ? await api(`/veterinarios/${atual.id}`, { method: "PUT", body: corpo })
+          : await api("/veterinarios", { method: "POST", body: corpo });
+        toast("Veterinário salvo.");
+        carregar(salvo.id);
+      } catch (err) { $("erro").textContent = err.message; }
+    };
+
+    if (!pode("usuarios", "editar")) {
+      $("btnNovo").hidden = true;
+      $("form").querySelectorAll("input, select, button").forEach((x) => (x.disabled = true));
+    }
+    if (!pode("usuarios", "excluir")) $("btnExcluir").remove();
+    carregar();
+  </script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registrar pagamento · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Recepção · Tela: Registrar pagamento
+       Fora da Sprint 1: lista os atendimentos reais (REQ 07), mas preços e recebimentos são simulados (mock.js + localStorage). -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Registrar pagamento</h1>
+          <p class="sub">Recebimento de consultas e procedimentos</p>
+        </div>
+      </header>
+      <p class="aviso-mock">Simulação — os recebimentos ficam salvos só neste navegador até o módulo de pagamentos entrar na API.</p>
+
+      <div class="grid-2-igual">
+        <div>
+          <section class="card">
+            <h2>Atendimento</h2>
+            <label class="rotulo" for="atendimento">Atendimento</label>
+            <select id="atendimento"></select>
+            <div class="tabela-wrap" style="margin-top:12px">
+              <table class="tabela">
+                <thead><tr><th>Item</th><th>Qtd.</th><th>Valor</th></tr></thead>
+                <tbody id="itens"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="card">
+            <h2>Últimos recebimentos</h2>
+            <table class="tabela">
+              <thead><tr><th>Animal</th><th>Valor</th><th>Forma</th><th>Quando</th></tr></thead>
+              <tbody id="ultimos"></tbody>
+            </table>
+          </section>
+        </div>
+
+        <form class="card" id="form">
+          <h2>Recebimento</h2>
+          <div class="segmentado" role="group" aria-label="Forma de pagamento" id="formas" style="margin-bottom:20px">
+            <button type="button" data-f="Pix" class="ativo" aria-pressed="true">Pix</button><button type="button" data-f="Cartão">Cartão</button><button type="button" data-f="Dinheiro">Dinheiro</button>
+          </div>
+          <div class="campo"><label class="rotulo" for="valor">Valor recebido</label><input id="valor" type="number" min="0" step="0.01" required></div>
+          <div class="campo"><label class="rotulo" for="parcelas">Parcelas</label>
+            <select id="parcelas"><option value="1">À vista</option><option value="2">2x sem juros</option><option value="3">3x sem juros</option></select></div>
+          <div class="campo"><label class="rotulo" for="data">Data do recebimento</label><input id="data" type="date" required></div>
+          <div class="campo"><label class="rotulo" for="obs">Observações</label><textarea id="obs"></textarea></div>
+          <div class="botoes-form">
+            <button type="reset" class="btn">Cancelar</button>
+            <button type="submit" class="btn btn-laranja">Registrar recebimento</button>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/mock.js"></script>
+  <script>
+    const usuario = exigirLogin("pagamentos");
+    montarLayout(usuario, "pagamentos");
+    const $ = (id) => document.getElementById(id);
+    let atendimentos = [], forma = "Pix";
+
+    function total(a) { return a ? MOCK.precos[a.tipo] || 0 : 0; }
+
+    function renderItens() {
+      const a = atendimentos.find((x) => x.id === Number($("atendimento").value));
+      $("itens").innerHTML = a
+        ? `<tr><td>${escapar(a.tipo)} — ${escapar(a.veterinario_nome)}</td><td>1</td><td>${moeda(total(a))}</td></tr>
+           <tr class="total"><td>Total</td><td></td><td>${moeda(total(a))}</td></tr>`
+        : `<tr><td colspan="3" class="vazio">Nenhum atendimento selecionado.</td></tr>`;
+      $("valor").value = total(a).toFixed(2);
+    }
+
+    function renderUltimos() {
+      const lista = [...Local.ler("pagamentos", []), ...MOCK.recebimentos].slice(0, 6);
+      $("ultimos").innerHTML = lista.map((r) => `<tr><td>${escapar(r.animal)}</td><td>${moeda(r.valor)}</td><td>${escapar(r.forma)}</td><td>${escapar(r.quando)}</td></tr>`).join("");
+    }
+
+    $("formas").onclick = (e) => {
+      const b = e.target.closest("[data-f]"); if (!b) return;
+      forma = b.dataset.f;
+      $("formas").querySelectorAll("button").forEach((x) => { x.classList.toggle("ativo", x === b); x.setAttribute("aria-pressed", x === b); });
+      $("parcelas").disabled = forma !== "Cartão";
+      if (forma !== "Cartão") $("parcelas").value = "1";
+    };
+    $("atendimento").onchange = renderItens;
+
+    $("form").onsubmit = (e) => {
+      e.preventDefault();
+      const a = atendimentos.find((x) => x.id === Number($("atendimento").value));
+      if (!a) return toast("Selecione um atendimento.", "erro");
+      const lista = Local.ler("pagamentos", []);
+      lista.unshift({ animal: a.animal_nome, valor: Number($("valor").value), forma, quando: quando(new Date()) });
+      Local.gravar("pagamentos", lista.slice(0, 20));
+      toast(`Recebimento de ${moeda($("valor").value)} registrado (${forma}).`);
+      renderUltimos();
+    };
+    $("form").onreset = () => setTimeout(() => { $("data").value = isoData(new Date()); renderItens(); });
+
+    (async () => {
+      $("data").value = isoData(new Date());
+      $("parcelas").disabled = true;
+      try {
+        const hoje = new Date();
+        atendimentos = await api("/agendamentos", { query: {
+          data_inicio: isoData(somarDias(hoje, -7)), data_fim: isoData(hoje), status: "concluido,em_atendimento,aguardando",
+        } });
+        atendimentos.reverse();
+      } catch (e) { toast(e.message, "erro"); }
+      $("atendimento").innerHTML = atendimentos.length
+        ? opcoes(atendimentos.map((a) => [a.id, `${a.animal_nome} · ${a.tipo} · ${dataBR(a.data_hora)} · ${a.veterinario_nome}`]))
+        : `<option value="">Nenhum atendimento recente</option>`;
+      renderItens();
+      renderUltimos();
+    })();
+  </script>
+</body>
+</html>

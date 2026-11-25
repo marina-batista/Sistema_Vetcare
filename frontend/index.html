@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+</head>
+<body>
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // Página raiz: manda para a tela inicial do perfil, ou para o login.
+    const u = usuarioLogado();
+    location.replace(u && getToken() ? paginaInicial(u) : "/auth/login.html");
+  </script>
+</body>
+</html>

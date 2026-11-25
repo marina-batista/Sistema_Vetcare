@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recepção · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Recepção · Tela: Visão geral (usa REQ 07 – agendamentos do dia) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Recepção</h1>
+          <p class="sub" id="hoje"></p>
+        </div>
+        <a class="btn btn-laranja" id="btnNovo" href="/recepcao/agenda.html?novo=1">Novo agendamento</a>
+      </header>
+
+      <form class="card filtros" id="formBusca" role="search" style="margin-bottom:24px;padding:22px 26px">
+        <input class="busca" id="busca" type="search" placeholder="Buscar tutor, animal ou telefone" aria-label="Buscar tutor, animal ou telefone">
+        <button class="btn btn-primario" type="submit">Buscar</button>
+      </form>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="grid-2">
+        <section class="card">
+          <h2>Agendamentos de hoje</h2>
+          <div class="tabela-wrap">
+            <table class="tabela">
+              <thead><tr><th>Hora</th><th>Animal e tutor</th><th>Veterinário</th><th>Status</th></tr></thead>
+              <tbody id="tbody"><tr><td colspan="4" class="vazio">Carregando…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div>
+          <section class="card">
+            <h2>Atalhos</h2>
+            <div style="display:grid;gap:14px">
+              <a class="btn btn-bloco" href="/recepcao/tutores.html?novo=1">Cadastrar tutor</a>
+              <a class="btn btn-bloco" href="/recepcao/animais.html?novo=1">Cadastrar animal</a>
+              <a class="btn btn-bloco" href="/recepcao/pagamentos.html">Registrar pagamento</a>
+            </div>
+          </section>
+          <section class="card">
+            <h2>Tutores aguardando</h2>
+            <p class="sub" style="margin:-10px 0 12px;font-size:14px">Clique em “Receber” quando o tutor chegar à clínica.</p>
+            <div id="chegadas"></div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const usuario = exigirLogin("agenda");
+    montarLayout(usuario, "visao-geral");
+    const $ = (id) => document.getElementById(id);
+    $("hoje").textContent = dataExtenso();
+    $("btnNovo").hidden = !pode("agenda", "editar");
+
+    async function carregar() {
+      const hoje = isoData(new Date());
+      let ags;
+      try { ags = await api("/agendamentos", { query: { data_inicio: hoje, data_fim: hoje } }); }
+      catch (e) { return toast(e.message, "erro"); }
+
+      const conta = (...s) => ags.filter((a) => s.includes(a.status)).length;
+      $("kpis").innerHTML = [
+        ["Agendamentos hoje", ags.length], ["Aguardando", conta("aguardando")], ["Em atendimento", conta("em_atendimento")],
+        ["Concluídos", conta("concluido")], ["Cancelados", conta("cancelado")],
+      ].map(([t, v]) => `<div class="kpi"><span>${t}</span><strong>${v}</strong></div>`).join("");
+
+      $("tbody").innerHTML = ags.length ? ags.map((a) => `
+        <tr>
+          <td class="destaque">${horaBR(a.data_hora)}</td>
+          <td class="duas-linhas"><strong style="color:var(--primary-dark)">${escapar(a.animal_nome)}</strong><small>${escapar(a.tutor_nome)}</small></td>
+          <td>${escapar(a.veterinario_nome)}</td>
+          <td>${badgeStatus(a.status)}</td>
+        </tr>`).join("") : `<tr><td colspan="4" class="vazio">Nenhum agendamento para hoje.</td></tr>`;
+
+      // "Receber" = check-in: o tutor chegou, o animal entra na fila do veterinário (status "aguardando")
+      const esperados = ags.filter((a) => ["agendado", "confirmado"].includes(a.status));
+      $("chegadas").innerHTML = esperados.length ? esperados.map((a) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--linha);gap:12px">
+          <div class="duas-linhas"><strong style="color:var(--primary-dark)">${escapar(a.animal_nome)}</strong><br><small class="sub">${escapar(a.tutor_nome)} · ${horaBR(a.data_hora)}</small></div>
+          ${pode("agenda", "editar") ? `<button class="btn btn-primario" data-receber="${a.id}" aria-label="Receber ${escapar(a.animal_nome)}">Receber</button>` : ""}
+        </div>`).join("") : `<p class="vazio">Ninguém para receber agora.</p>`;
+    }
+
+    $("chegadas").onclick = async (e) => {
+      const b = e.target.closest("[data-receber]");
+      if (!b) return;
+      try {
+        await api(`/agendamentos/${b.dataset.receber}/status`, { method: "PATCH", body: { status: "aguardando" } });
+        toast("Chegada registrada. O animal entrou na fila do veterinário.");
+        carregar();
+      } catch (err) { toast(err.message, "erro"); }
+    };
+
+    $("formBusca").onsubmit = (e) => {
+      e.preventDefault();
+      const q = $("busca").value.trim();
+      if (!q) return;
+      // Com números → busca de tutores por telefone; senão → animais (por nome do animal ou do tutor)
+      location.href = /\d/.test(q) ? `/recepcao/tutores.html?q=${encodeURIComponent(q)}` : `/recepcao/animais.html?q=${encodeURIComponent(q)}`;
+    };
+
+    carregar();
+    setInterval(carregar, 60000); // atualiza a cada minuto
+  </script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Animais · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Recepção · Tela: Animais + popup "Cadastrar animal" (REQ 05 – Manter Animal) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Animais</h1>
+          <p class="sub" id="contagem">&nbsp;</p>
+        </div>
+        <button class="btn btn-primario" id="btnNovo">Novo animal</button>
+      </header>
+
+      <section class="card">
+        <div class="filtros">
+          <input class="busca" id="busca" type="search" placeholder="Buscar por nome do animal ou tutor" aria-label="Buscar por nome do animal ou tutor">
+          <select id="filtroTutor" aria-label="Filtrar por tutor"><option value="">Todos os tutores</option></select>
+          <select id="filtroEspecie" aria-label="Filtrar por espécie"><option value="">Todas espécies</option></select>
+        </div>
+        <div class="tabela-wrap">
+          <table class="tabela">
+            <thead><tr><th>Animal</th><th>Espécie</th><th>Raça</th><th>Sexo</th><th>Nascimento</th><th>Tutor</th><th>Ações</th></tr></thead>
+            <tbody id="tbody"><tr><td colspan="7" class="vazio">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="rodape-tabela" id="rodape"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const usuario = exigirLogin("tutores_animais");
+    montarLayout(usuario, "animais");
+    const $ = (id) => document.getElementById(id);
+    const ESPECIES = ["Cão", "Gato", "Ave", "Roedor", "Réptil", "Outro"];
+    const TAMANHO = 7;
+    let pagina = 1, itens = [], tutores = [];
+
+    $("busca").value = parametro("q") || "";
+    $("filtroEspecie").innerHTML += opcoes(ESPECIES.map((e) => [e, e]));
+
+    async function carregarTutores() {
+      const r = await api("/tutores", { query: { tamanho: 500 } });
+      tutores = r.itens;
+      $("filtroTutor").innerHTML = `<option value="">Todos os tutores</option>` + opcoes(tutores.map((t) => [t.id, t.nome]), parametro("tutor_id"));
+    }
+
+    async function carregar() {
+      try {
+        const r = await api("/animais", { query: { q: $("busca").value.trim(), tutor_id: $("filtroTutor").value, especie: $("filtroEspecie").value, pagina, tamanho: TAMANHO } });
+        itens = r.itens;
+        if (!$("busca").value && !$("filtroTutor").value && !$("filtroEspecie").value) $("contagem").textContent = `${r.total} animais vinculados a tutores`;
+        $("tbody").innerHTML = itens.length ? itens.map((a) => `
+          <tr>
+            <td class="destaque">${escapar(a.nome)}</td>
+            <td>${escapar(a.especie)}</td>
+            <td>${escapar(a.raca || "—")}</td>
+            <td>${escapar(a.sexo)}</td>
+            <td>${dataBR(a.data_nascimento)}</td>
+            <td class="destaque"><a href="/recepcao/tutores.html?q=${encodeURIComponent(a.tutor_nome)}">${escapar(a.tutor_nome)}</a></td>
+            <td><div class="acoes">
+              ${pode("tutores_animais", "editar") ? `<button class="link-acao" data-id="${a.id}">Editar</button>` : ""}
+            </div></td>
+          </tr>`).join("") : `<tr><td colspan="7" class="vazio">Nenhum animal encontrado.</td></tr>`;
+        renderPaginacao($("rodape"), r, (p) => { pagina = p; carregar(); });
+      } catch (e) { toast(e.message, "erro"); }
+    }
+
+    /* Popup "Cadastrar animal" (Figma) — todo animal precisa estar vinculado a um tutor */
+    function abrirFormulario(a) {
+      if (!tutores.length) return toast("Cadastre um tutor antes de cadastrar o animal.", "erro");
+      abrirModal({
+        titulo: a ? "Editar animal" : "Cadastrar animal",
+        subtitulo: "Todo animal precisa estar vinculado a um tutor.",
+        campos: [
+          { nome: "tutor_id", rotulo: "Tutor responsável", tipo: "select", obrigatorio: true, largura: "inteira",
+            placeholder: "Selecione o tutor", opcoes: tutores.map((t) => [t.id, t.nome]) },
+          { nome: "nome", rotulo: "Nome do animal", obrigatorio: true },
+          { nome: "especie", rotulo: "Espécie", tipo: "select", obrigatorio: true, placeholder: "", opcoes: ESPECIES.map((e) => [e, e]) },
+          { nome: "raca", rotulo: "Raça" },
+          { nome: "sexo", rotulo: "Sexo", tipo: "select", obrigatorio: true, placeholder: "", opcoes: [["Macho", "Macho"], ["Fêmea", "Fêmea"]] },
+          { nome: "data_nascimento", rotulo: "Data de nascimento", tipo: "date", attrs: `max="${isoData(new Date())}"` },
+        ],
+        valores: a || { tutor_id: $("filtroTutor").value },
+        botoesExtras: a && pode("tutores_animais", "excluir") ? [{
+          texto: "Excluir animal", classe: "btn-perigo",
+          aoClicar: async (fechar) => {
+            if (!confirm(`Excluir ${a.nome}? Os agendamentos dele também serão removidos.`)) return;
+            await api(`/animais/${a.id}`, { method: "DELETE" });
+            toast("Animal excluído."); fechar(); carregar();
+          },
+        }] : [],
+        textoSalvar: "Salvar animal",
+        aoSalvar: async (dados) => {
+          dados.tutor_id = Number(dados.tutor_id);
+          if (a) await api(`/animais/${a.id}`, { method: "PUT", body: dados });
+          else await api("/animais", { method: "POST", body: dados });
+          toast(a ? "Animal atualizado." : "Animal cadastrado.");
+          carregarTutores();
+          carregar();
+        },
+      });
+    }
+
+    $("tbody").onclick = (e) => {
+      const b = e.target.closest("button[data-id]");
+      if (b) abrirFormulario(itens.find((x) => x.id === Number(b.dataset.id)));
+    };
+    $("btnNovo").hidden = !pode("tutores_animais", "editar");
+
+    $("btnNovo").onclick = () => abrirFormulario(null);
+    $("busca").oninput = debounce(() => { pagina = 1; carregar(); });
+    $("filtroTutor").onchange = $("filtroEspecie").onchange = () => { pagina = 1; carregar(); };
+
+    (async () => {
+      try { await carregarTutores(); } catch (e) { toast(e.message, "erro"); }
+      await carregar();
+      if (parametro("novo")) abrirFormulario(null);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard financeiro · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Administração · Tela: Dashboard financeiro (fora da Sprint 1 — dados de exemplo em js/mock.js) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Dashboard financeiro</h1>
+          <p class="sub" id="periodo"></p>
+        </div>
+        <div class="segmentado" role="group" aria-label="Período">
+          <button data-p="dia">Dia</button><button data-p="semana">Semana</button><button data-p="mes" class="ativo" aria-pressed="true">Mês</button>
+        </div>
+      </header>
+      <p class="aviso-mock">Dados de exemplo — o módulo financeiro será integrado à API em uma próxima sprint.</p>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="grid-2" style="grid-template-columns:1.5fr 1fr">
+        <section class="card">
+          <h2>Fluxo de caixa por semana</h2>
+          <div class="legenda"><span><i style="background:var(--primary-default)"></i>Entradas</span><span><i style="background:var(--cta-button)"></i>Saídas</span></div>
+          <div class="grafico-barras" id="fluxo" role="img"></div>
+          <div class="eixo-x" id="fluxoEixo"></div>
+        </section>
+        <section class="card">
+          <h2>Atendimentos realizados por semana</h2>
+          <div class="grafico-barras" id="atend" role="img" style="margin-top:46px"></div>
+          <div class="eixo-x" id="atendEixo"></div>
+        </section>
+      </div>
+
+      <div class="grid-2-igual" style="margin-top:24px">
+        <section class="card">
+          <h2>Recebimentos por forma de pagamento</h2>
+          <div id="formas"></div>
+        </section>
+        <section class="card">
+          <h2>Recebimentos recentes</h2>
+          <table class="tabela">
+            <thead><tr><th>Animal</th><th>Valor</th><th>Forma</th><th>Quando</th></tr></thead>
+            <tbody id="recentes"></tbody>
+          </table>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/mock.js"></script>
+  <script>
+    const usuario = exigirLogin("relatorios");
+    montarLayout(usuario, "financeiro");
+    const $ = (id) => document.getElementById(id);
+    const F = MOCK.financeiro;
+    const FATOR = { dia: 1 / 22, semana: 1 / 4.3, mes: 1 };
+
+    function render(periodo) {
+      const f = FATOR[periodo];
+      const hoje = new Date();
+      $("periodo").textContent = periodo === "mes"
+        ? capitalizar(hoje.toLocaleDateString("pt-BR", { month: "long", year: "numeric" }))
+        : periodo === "semana" ? "Esta semana" : dataExtenso(hoje);
+      const kpis = [["Recebido", moeda(F.recebido * f)], ["Saídas", moeda(F.saidas * f)],
+        ["Saldo", moeda((F.recebido - F.saidas) * f)], ["A receber", moeda(F.aReceber * f)],
+        ["Atendimentos", Math.round(F.atendimentos * f)]];
+      $("kpis").innerHTML = kpis.map(([t, v]) => `<div class="kpi"><span>${t}</span><strong>${String(v).replace(",00", "")}</strong></div>`).join("");
+    }
+
+    // Gráfico de barras agrupadas (sem biblioteca)
+    const max = 16000;
+    $("fluxo").innerHTML = F.semanas.map((s) => `
+      <div class="grupo-barras">
+        <div class="barra" style="height:${(s.entradas / max) * 100}%;background:var(--primary-default)" title="Entradas: ${moeda(s.entradas)}"></div>
+        <div class="barra" style="height:${(s.saidas / max) * 100}%;background:var(--cta-button)" title="Saídas: ${moeda(s.saidas)}"></div>
+      </div>`).join("");
+    $("fluxo").setAttribute("aria-label", F.semanas.map((s) => `${s.rotulo}: entradas ${moeda(s.entradas)}, saídas ${moeda(s.saidas)}`).join("; "));
+    $("fluxoEixo").innerHTML = F.semanas.map((s) => `<span>${s.rotulo}</span>`).join("");
+
+    const maxAt = Math.max(...F.semanas.map((s) => s.atendimentos));
+    $("atend").innerHTML = F.semanas.map((s) => `<div class="barra" style="height:${(s.atendimentos / maxAt) * 88}%;background:var(--primary-default)"><span class="valor">${s.atendimentos}</span></div>`).join("");
+    $("atend").setAttribute("aria-label", F.semanas.map((s, i) => `Semana ${i + 1}: ${s.atendimentos} atendimentos`).join("; "));
+    $("atendEixo").innerHTML = F.semanas.map((_, i) => `<span>Sem ${i + 1}</span>`).join("");
+
+    $("formas").innerHTML = F.formas.map(([nome, pct]) => `
+      <div class="linha-progresso"><span>${nome}</span><span>${pct}%</span></div>
+      <div class="progresso" role="progressbar" aria-label="${nome}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div style="width:${pct}%"></div></div>`).join("");
+
+    $("recentes").innerHTML = MOCK.recebimentos.map((r) => `<tr><td>${escapar(r.animal)}</td><td>${moeda(r.valor)}</td><td>${r.forma}</td><td>${r.quando}</td></tr>`).join("");
+
+    document.querySelectorAll(".segmentado button").forEach((b) => (b.onclick = () => {
+      document.querySelectorAll(".segmentado button").forEach((x) => { x.classList.remove("ativo"); x.removeAttribute("aria-pressed"); });
+      b.classList.add("ativo"); b.setAttribute("aria-pressed", "true");
+      render(b.dataset.p);
+    }));
+    render("mes");
+  </script>
+</body>
+</html>

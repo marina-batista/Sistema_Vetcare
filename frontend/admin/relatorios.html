@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relatórios gerenciais · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Administração · Tela: Relatórios gerenciais
+       Atendimentos/Agenda/Animais usam a API real (REQ 05 e 07); Faturamento usa dados de exemplo. -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Relatórios gerenciais</h1>
+          <p class="sub">Relatórios consolidados com filtros personalizados</p>
+        </div>
+      </header>
+
+      <div class="grid-lista-form" style="grid-template-columns:1fr 1.6fr">
+        <form class="card nao-imprimir" id="form">
+          <h2>Filtros</h2>
+          <div class="campo"><label class="rotulo" for="tipo">Tipo de relatório</label>
+            <select id="tipo">
+              <option value="atendimentos">Atendimentos</option><option value="animais">Animais cadastrados</option>
+              <option value="agenda">Agenda</option><option value="faturamento">Faturamento</option>
+            </select></div>
+          <div class="grade-form campo">
+            <div><label class="rotulo" for="inicio">Período inicial</label><input type="date" id="inicio"></div>
+            <div><label class="rotulo" for="fim">Período final</label><input type="date" id="fim"></div>
+          </div>
+          <div class="campo"><label class="rotulo" for="vet">Veterinário</label><select id="vet"><option value="">Todos</option></select></div>
+          <div class="campo"><label class="rotulo" for="agrupar">Agrupar por</label>
+            <select id="agrupar"><option value="dia">Dia</option><option value="semana">Semana</option><option value="veterinario">Veterinário</option></select></div>
+          <span class="rotulo" id="rotFormato">Formato de exportação</span>
+          <div class="segmentado" role="group" aria-labelledby="rotFormato" id="formato">
+            <button type="button" data-f="pdf" class="ativo" aria-pressed="true">PDF</button><button type="button" data-f="excel">Excel</button><button type="button" data-f="csv">CSV</button>
+          </div>
+          <div class="botoes-form">
+            <button type="button" class="btn" id="btnLimpar">Limpar</button>
+            <button type="submit" class="btn btn-primario">Gerar relatório</button>
+          </div>
+        </form>
+
+        <div>
+          <div class="cards-tipo nao-imprimir" id="cards"></div>
+          <section class="card">
+            <h2 id="tituloPrevia">Pré-visualização</h2>
+            <p class="aviso-mock" id="avisoMock" hidden>Faturamento: dados de exemplo (módulo de pagamentos previsto para a próxima sprint).</p>
+            <div class="tabela-wrap"><table class="tabela" id="previa"></table></div>
+            <div class="botoes-form nao-imprimir">
+              <button class="btn" data-exportar="pdf">Exportar PDF</button>
+              <button class="btn" data-exportar="excel">Exportar Excel</button>
+              <button class="btn" data-exportar="csv">Exportar CSV</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/mock.js"></script>
+  <script>
+    const usuario = exigirLogin("relatorios");
+    montarLayout(usuario, "relatorios");
+    const $ = (id) => document.getElementById(id);
+    const TIPOS = {
+      atendimentos: ["Atendimentos", "Consultas, retornos e procedimentos"],
+      animais: ["Animais cadastrados", "Espécies, raças e tutores"],
+      agenda: ["Agenda", "Ocupação e cancelamentos"],
+      faturamento: ["Faturamento", "Recebimentos e formas de pagamento"],
+    };
+    let formato = "pdf", relatorio = { cabecalho: [], linhas: [], total: null };
+
+    $("cards").innerHTML = Object.entries(TIPOS).map(([k, [t, d]]) => `<button type="button" class="card-tipo" data-tipo="${k}"><strong>${t}</strong><span>${d}</span></button>`).join("");
+    $("cards").onclick = (e) => { const b = e.target.closest("[data-tipo]"); if (b) { $("tipo").value = b.dataset.tipo; atualizar(); } };
+
+    function filtrosPadrao() {
+      const hoje = new Date();
+      $("inicio").value = isoData(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
+      $("fim").value = isoData(hoje);
+      $("vet").value = ""; $("agrupar").value = "dia";
+    }
+
+    function chaveGrupo(ag) {
+      const d = new Date(ag.data_hora);
+      if ($("agrupar").value === "veterinario") return ag.veterinario_nome;
+      if ($("agrupar").value === "semana") { const s = somarDias(d, -((d.getDay() + 6) % 7)); return "Semana de " + dataBR(s); }
+      return dataBR(d);
+    }
+
+    async function montar() {
+      const tipo = $("tipo").value;
+      const vetNome = $("vet").selectedOptions[0].textContent;
+      $("avisoMock").hidden = tipo !== "faturamento";
+      if (tipo === "atendimentos" || tipo === "agenda") {
+        const ags = await api("/agendamentos", { query: { data_inicio: $("inicio").value, data_fim: $("fim").value, veterinario_id: $("vet").value } });
+        const grupos = new Map();
+        ags.forEach((a) => {
+          const k = chaveGrupo(a);
+          if (!grupos.has(k)) grupos.set(k, { total: 0, concl: 0, canc: 0 });
+          const g = grupos.get(k); g.total++;
+          if (a.status === "cancelado") g.canc++; if (a.status === "concluido") g.concl++;
+        });
+        const linhas = [...grupos.entries()].reverse();
+        const soma = (c) => linhas.reduce((s, [, g]) => s + g[c], 0);
+        if (tipo === "atendimentos") {
+          return { cabecalho: ["Grupo", "Veterinário", "Atendimentos", "Cancelados", "Faturamento"],
+            linhas: linhas.map(([k, g]) => [k, vetNome, g.total - g.canc, g.canc, "—"]),
+            total: ["Total", "", soma("total") - soma("canc"), soma("canc"), "—"] };
+        }
+        const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0) + "%";
+        return { cabecalho: ["Grupo", "Agendados", "Concluídos", "Cancelados", "% cancelamento"],
+          linhas: linhas.map(([k, g]) => [k, g.total, g.concl, g.canc, pct(g.canc, g.total)]),
+          total: ["Total", soma("total"), soma("concl"), soma("canc"), pct(soma("canc"), soma("total"))] };
+      }
+      if (tipo === "animais") {
+        const { itens } = await api("/animais", { query: { tamanho: 500 } });
+        const grupos = new Map();
+        itens.forEach((a) => {
+          const k = `${a.especie}|${a.raca || "—"}`;
+          if (!grupos.has(k)) grupos.set(k, { qtd: 0, tutores: new Set() });
+          grupos.get(k).qtd++; grupos.get(k).tutores.add(a.tutor_id);
+        });
+        const linhas = [...grupos.entries()].sort().map(([k, g]) => [...k.split("|"), g.qtd, g.tutores.size]);
+        return { cabecalho: ["Espécie", "Raça", "Animais", "Tutores"], linhas, total: ["Total", "", itens.length, new Set(itens.map((a) => a.tutor_id)).size] };
+      }
+      const linhas = MOCK.faturamento.map((f) => [f.grupo, f.qtd, moeda(f.valor)]);
+      return { cabecalho: ["Forma de pagamento", "Recebimentos", "Valor"], linhas,
+        total: ["Total", MOCK.faturamento.reduce((s, f) => s + f.qtd, 0), moeda(MOCK.faturamento.reduce((s, f) => s + f.valor, 0))] };
+    }
+
+    async function atualizar() {
+      const tipo = $("tipo").value;
+      document.querySelectorAll(".card-tipo").forEach((c) => c.classList.toggle("ativo", c.dataset.tipo === tipo));
+      $("tituloPrevia").textContent = `Pré-visualização · ${TIPOS[tipo][0]} de ${dataBR($("inicio").value).slice(0, 5)} a ${dataBR($("fim").value).slice(0, 5)}`;
+      try { relatorio = await montar(); } catch (e) { toast(e.message, "erro"); return; }
+      const { cabecalho, linhas, total } = relatorio;
+      $("previa").innerHTML = `<thead><tr>${cabecalho.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>
+        ${linhas.length ? linhas.map((l) => `<tr>${l.map((c) => `<td>${escapar(c)}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${cabecalho.length}" class="vazio">Nenhum dado no período.</td></tr>`}
+        ${linhas.length && total ? `<tr class="total">${total.map((c) => `<td>${escapar(c)}</td>`).join("")}</tr>` : ""}</tbody>`;
+    }
+
+    function exportar(f) {
+      if (f === "pdf") return window.print();
+      const { cabecalho, linhas, total } = relatorio;
+      const csv = [cabecalho, ...linhas, ...(total ? [total] : [])]
+        .map((l) => l.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }); // BOM: acentos corretos no Excel
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `relatorio-${$("tipo").value}-${$("inicio").value}_a_${$("fim").value}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    $("formato").onclick = (e) => {
+      const b = e.target.closest("[data-f]"); if (!b) return;
+      formato = b.dataset.f;
+      $("formato").querySelectorAll("button").forEach((x) => { x.classList.toggle("ativo", x === b); x.setAttribute("aria-pressed", x === b); });
+    };
+    document.querySelectorAll("[data-exportar]").forEach((b) => (b.onclick = () => exportar(b.dataset.exportar)));
+    $("form").onsubmit = async (e) => { e.preventDefault(); await atualizar(); exportar(formato); };
+    $("btnLimpar").onclick = () => { filtrosPadrao(); atualizar(); };
+    ["tipo", "inicio", "fim", "vet", "agrupar"].forEach((id) => ($(id).onchange = atualizar));
+
+    (async () => {
+      filtrosPadrao();
+      try {
+        const vets = await api("/veterinarios");
+        $("vet").innerHTML += opcoes(vets.map((v) => [v.id, v.nome]));
+      } catch (e) { toast(e.message, "erro"); }
+      atualizar();
+    })();
+  </script>
+</body>
+</html>

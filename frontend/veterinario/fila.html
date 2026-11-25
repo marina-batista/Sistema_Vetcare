@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fila do dia · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Veterinário · Tela: Fila do dia (agendamentos do veterinário logado — REQ 07) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1>Fila do dia</h1>
+          <p class="sub" id="sub"></p>
+        </div>
+      </header>
+      <div id="fila" aria-live="polite"><p class="vazio">Carregando…</p></div>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const usuario = exigirLogin("prontuario");
+    montarLayout(usuario, "fila");
+    const $ = (id) => document.getElementById(id);
+    $("sub").textContent = `${usuario.nome} · ${new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`;
+
+    function botao(a) {
+      const url = `/veterinario/prontuario.html?id=${a.animal_id}`;
+      if (a.status === "em_atendimento") return `<a class="btn btn-primario" href="${url}">Abrir prontuário</a>`;
+      if (a.status === "aguardando") return `<button class="btn btn-primario" data-iniciar="${a.id}" data-animal="${a.animal_id}">Iniciar atendimento</button>`;
+      return `<a class="btn" href="${url}">Ver prontuário</a>`;
+    }
+
+    async function carregar() {
+      if (!usuario.veterinario_id) {
+        $("fila").innerHTML = `<div class="card vazio">Seu usuário não está vinculado a um cadastro de veterinário.<br>Peça ao administrador para usar o mesmo e-mail (${escapar(usuario.email)}) na tela Veterinários.</div>`;
+        return;
+      }
+      const hoje = isoData(new Date());
+      try {
+        const ags = (await api("/agendamentos", { query: { data_inicio: hoje, data_fim: hoje, veterinario_id: usuario.veterinario_id } }))
+          .filter((a) => a.status !== "cancelado");
+        $("fila").innerHTML = ags.length ? ags.map((a) => `
+          <article class="fila-item">
+            <span class="fila-hora">${horaBR(a.data_hora)}</span>
+            <span class="avatar grande" aria-hidden="true">${inicial(a.animal_nome)}</span>
+            <div><strong>${escapar(a.animal_nome)}</strong><small>${escapar(a.animal_raca || a.animal_especie)} · ${idade(a.animal_nascimento)}</small></div>
+            <div>Tutor: ${escapar(a.tutor_nome)}<br>${escapar(a.tipo)}</div>
+            <div>${badgeStatus(a.status)}</div>
+            ${botao(a)}
+          </article>`).join("") : `<div class="card vazio">Nenhum atendimento agendado para hoje.</div>`;
+      } catch (e) { toast(e.message, "erro"); }
+    }
+
+    $("fila").onclick = async (e) => {
+      const b = e.target.closest("[data-iniciar]");
+      if (!b) return;
+      try {
+        await api(`/agendamentos/${b.dataset.iniciar}/status`, { method: "PATCH", body: { status: "em_atendimento" } });
+        location.href = `/veterinario/prontuario.html?id=${b.dataset.animal}`;
+      } catch (err) { toast(err.message, "erro"); }
+    };
+
+    carregar();
+    setInterval(carregar, 60000);
+  </script>
+</body>
+</html>

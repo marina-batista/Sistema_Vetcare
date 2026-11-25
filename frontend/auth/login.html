@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Tela: Login (REQ 02 – Autenticar Usuário) -->
+  <div class="auth">
+    <div class="auth-padrao" aria-hidden="true"></div>
+    <main class="auth-lado">
+      <div class="auth-logo"><img src="/assets/logo.svg" alt="VetCare"></div>
+
+      <form class="auth-card" id="form">
+        <h1>Entrar</h1>
+        <p class="sub">Acesse sua conta para continuar.</p>
+
+        <div class="campo">
+          <label class="rotulo" for="email">E-mail ou usuário</label>
+          <input id="email" type="text" placeholder="Digite o e-mail ou usuário" autocomplete="username" required>
+        </div>
+        <div class="campo">
+          <label class="rotulo" for="senha">Senha</label>
+          <div class="campo-senha">
+            <input id="senha" type="password" placeholder="Digite sua senha" autocomplete="current-password" required>
+            <button type="button" class="olho" data-olho="senha"></button>
+          </div>
+        </div>
+
+        <div class="linha-entre">
+          <label class="check"><input type="checkbox" id="manter"> Manter conectado</label>
+          <a class="link-forte" href="/auth/recuperar-senha.html">Esqueci minha senha</a>
+        </div>
+
+        <button class="btn btn-primario btn-bloco" type="submit">Entrar</button>
+        <p class="erro-form" id="erro" role="alert"></p>
+      </form>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const ja = usuarioLogado();
+    if (ja && getToken() && itensMenu(ja).length) location.replace(paginaInicial(ja));
+    ativarOlhoSenha();
+
+    const form = document.getElementById("form");
+    const erro = document.getElementById("erro");
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      erro.textContent = "";
+      const btn = form.querySelector("[type=submit]");
+      btn.disabled = true;
+      try {
+        const manter = document.getElementById("manter").checked;
+        const r = await api("/auth/login", {
+          method: "POST",
+          body: { email: form.email.value.trim(), senha: form.senha.value, manter_conectado: manter },
+        });
+        if (!itensMenu(r.usuario).length) throw new Error("Seu usuário não tem acesso a nenhum módulo. Procure o administrador.");
+        salvarSessao(r.token, r.usuario, manter);
+        location.href = paginaInicial(r.usuario);
+      } catch (err) {
+        erro.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>

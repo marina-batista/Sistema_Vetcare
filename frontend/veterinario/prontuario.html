@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prontuário · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Veterinário · Telas: Prontuário (aba Atendimento) e Vacinação (aba Vacinação)
+       Dados do animal e status do atendimento vêm da API (REQ 05/07).
+       Registro clínico e vacinas ficam fora da Sprint 1: salvos no navegador (localStorage).
+       Popups: "Registrar vacina" e "Emitir prescrição" (js/prescricao.js). -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1 id="titulo">Prontuário</h1>
+          <p class="sub" id="resumo"></p>
+        </div>
+        <div class="topo-acoes" id="acoesTopo">
+          <button class="btn" id="btnPrescricao">Emitir prescrição</button>
+          <button class="btn" id="btnVacina">Registrar vacina</button>
+        </div>
+      </header>
+
+      <div class="segmentado nao-imprimir" role="tablist" aria-label="Seções do prontuário" id="abas" style="margin-bottom:24px">
+        <button role="tab" data-aba="atendimento" aria-controls="painelAtendimento">Atendimento</button>
+        <button role="tab" data-aba="vacinacao" aria-controls="painelVacinacao">Vacinação</button>
+      </div>
+
+      <!-- ===== Aba Atendimento ===== -->
+      <div class="grid-lista-form" id="painelAtendimento" role="tabpanel" style="grid-template-columns:1fr 1.55fr">
+        <section class="card">
+          <h2>Histórico de atendimentos</h2>
+          <div id="historico"></div>
+        </section>
+
+        <form class="card" id="formAtendimento">
+          <h2 id="tituloRegistro">Registrar atendimento</h2>
+          <div class="campo"><label class="rotulo" for="anamnese">Anamnese</label><textarea id="anamnese" required></textarea></div>
+          <div class="campo"><label class="rotulo" for="exame">Exame físico</label><textarea id="exame"></textarea></div>
+          <div class="grade-3 campo">
+            <div><label class="rotulo" for="temperatura">Temperatura</label><input id="temperatura" placeholder="38,6 °C"></div>
+            <div><label class="rotulo" for="fc">Freq. cardíaca</label><input id="fc" placeholder="96 bpm"></div>
+            <div><label class="rotulo" for="peso">Peso</label><input id="peso" placeholder="32 kg"></div>
+          </div>
+          <div class="campo"><label class="rotulo" for="hipotese">Hipótese diagnóstica</label><input id="hipotese" required></div>
+          <div class="campo"><label class="rotulo" for="procedimentos">Procedimentos realizados</label><input id="procedimentos"></div>
+          <p class="erro-form" id="erroAt" role="alert"></p>
+          <div class="botoes-form">
+            <button type="button" class="btn" id="btnRascunho">Salvar rascunho</button>
+            <button type="submit" class="btn btn-primario">Finalizar atendimento</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- ===== Aba Vacinação ===== -->
+      <div class="grid-2-igual" id="painelVacinacao" role="tabpanel" hidden>
+        <form class="card" id="formVacina">
+          <h2>Registrar vacina</h2>
+          <div class="campo"><label class="rotulo" for="vacina">Vacina</label><select id="vacina" required></select></div>
+          <div class="campo"><label class="rotulo" for="fabricante">Fabricante</label><input id="fabricante" required></div>
+          <div class="campo"><label class="rotulo" for="lote">Lote</label><input id="lote" required></div>
+          <div class="grade-form campo">
+            <div><label class="rotulo" for="aplicacao">Data de aplicação</label><input type="date" id="aplicacao" required></div>
+            <div><label class="rotulo" for="proxima">Próxima dose / reforço</label><input type="date" id="proxima"></div>
+          </div>
+          <div class="campo"><label class="rotulo" for="obsVacina">Observações</label><textarea id="obsVacina"></textarea></div>
+          <div class="botoes-form"><button type="submit" class="btn btn-primario">Salvar vacina</button></div>
+        </form>
+        <section class="card">
+          <h2>Histórico de vacinas</h2>
+          <div class="tabela-wrap">
+            <table class="tabela">
+              <thead><tr><th>Vacina</th><th>Aplicação</th><th>Próxima dose</th><th>Status</th></tr></thead>
+              <tbody id="vacinas"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/mock.js"></script>
+  <script src="/js/prescricao.js"></script>
+  <script>
+    const usuario = exigirLogin("prontuario");
+    const $ = (id) => document.getElementById(id);
+    const animalId = Number(parametro("id"));
+    if (!animalId) {
+      location.replace("/veterinario/prontuarios.html" + (parametro("aba") ? "?aba=vacinacao" : ""));
+      throw new Error("Animal não informado");
+    }
+
+    let animal = null, agendamentos = [];
+    const chave = (tipo) => `${tipo}_${animalId}`;
+    const VACINAS = {
+      Cão: ["V10 (polivalente)", "V8 (polivalente)", "Antirrábica", "Giárdia", "Gripe canina", "Leishmaniose"],
+      Gato: ["V4 (felina)", "V5 (felina)", "V3 (felina)", "Antirrábica", "FeLV"],
+    };
+
+    /* ---------- Abas ---------- */
+    function mostrarAba(nome) {
+      montarLayout(usuario, nome === "vacinacao" ? "vacinacao" : "prontuarios");
+      $("painelAtendimento").hidden = nome !== "atendimento";
+      $("painelVacinacao").hidden = nome !== "vacinacao";
+      $("abas").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("ativo", b.dataset.aba === nome);
+        b.setAttribute("aria-selected", b.dataset.aba === nome);
+      });
+      $("btnVacina").hidden = !pode("prontuario", "editar");
+      history.replaceState(null, "", `?id=${animalId}${nome === "vacinacao" ? "&aba=vacinacao" : ""}`);
+    }
+    $("abas").onclick = (e) => { const b = e.target.closest("[data-aba]"); if (b) mostrarAba(b.dataset.aba); };
+    $("btnVacina").onclick = () => abrirPopupVacina();
+    $("btnPrescricao").onclick = () => abrirPrescricao({ animal, usuario });
+    $("btnPrescricao").hidden = !pode("prontuario", "editar");
+
+    /* ---------- Atendimento ---------- */
+    function registros() {
+      const locais = Local.ler(chave("prontuario"), []);
+      const exemplo = MOCK.historicoClinico[animal.nome] || [];
+      return [...locais, ...exemplo].sort((a, b) => b.data.localeCompare(a.data));
+    }
+
+    function renderHistorico() {
+      const lista = registros();
+      // Consultas concluídas sem registro clínico também aparecem (vêm da agenda)
+      const datasComRegistro = new Set(lista.map((r) => r.data));
+      const semRegistro = agendamentos
+        .filter((a) => a.status === "concluido" && !datasComRegistro.has(isoData(new Date(a.data_hora))))
+        .map((a) => ({ data: isoData(new Date(a.data_hora)), vet: a.veterinario_nome, diagnostico: `${a.tipo} — atendimento concluído.`, observacoes: "Sem registro clínico detalhado." }));
+      const tudo = [...lista, ...semRegistro].sort((a, b) => b.data.localeCompare(a.data));
+      $("historico").innerHTML = tudo.length ? tudo.map((r) => `
+        <div class="timeline-item">
+          <h4>${dataBR(r.data)} · ${escapar(r.vet)}</h4>
+          <p>Diagnóstico: ${escapar(r.diagnostico)}</p>
+          ${r.observacoes ? `<p>Observações: ${escapar(r.observacoes)}</p>` : ""}
+        </div>`).join("") : `<p class="vazio">Nenhum atendimento anterior.</p>`;
+      const peso = lista.find((r) => r.peso);
+      $("resumo").textContent = [animal.raca || animal.especie, animal.sexo, idade(animal.data_nascimento), peso && peso.peso, `Tutor(a): ${animal.tutor_nome}`].filter(Boolean).join(" · ");
+    }
+
+    const CAMPOS_AT = ["anamnese", "exame", "temperatura", "fc", "peso", "hipotese", "procedimentos"];
+    function lerForm() { return Object.fromEntries(CAMPOS_AT.map((c) => [c, $(c).value.trim()])); }
+
+    $("btnRascunho").onclick = () => { Local.gravar(chave("rascunho"), lerForm()); toast("Rascunho salvo."); };
+
+    $("formAtendimento").onsubmit = async (e) => {
+      e.preventDefault();
+      const d = lerForm();
+      const lista = Local.ler(chave("prontuario"), []);
+      lista.push({ data: isoData(new Date()), vet: usuario.nome, diagnostico: d.hipotese,
+        observacoes: d.procedimentos, anamnese: d.anamnese, exame: d.exame, temperatura: d.temperatura, fc: d.fc, peso: d.peso });
+      Local.gravar(chave("prontuario"), lista);
+      localStorage.removeItem("vetcare_" + chave("rascunho"));
+      // Integração com a agenda (REQ 07): conclui o atendimento em andamento deste animal
+      const emAndamento = agendamentos.find((a) => a.status === "em_atendimento");
+      try {
+        if (emAndamento) await api(`/agendamentos/${emAndamento.id}/status`, { method: "PATCH", body: { status: "concluido" } });
+        toast("Atendimento finalizado.");
+        $("formAtendimento").reset();
+        await carregar();
+      } catch (err) { $("erroAt").textContent = err.message; }
+    };
+
+    /* ---------- Vacinação ---------- */
+    function statusVacina(proxima) {
+      if (!proxima) return badge("Dose única", "verde");
+      const hoje = isoData(new Date());
+      if (proxima < hoje) return badge("Vencida", "vermelho");
+      if (proxima === hoje) return badge("Vence hoje", "laranja");
+      if (proxima <= isoData(somarDias(new Date(), 30))) return badge("Vence em breve", "laranja");
+      return badge("Em dia", "verde");
+    }
+    function renderVacinas() {
+      const lista = [...Local.ler(chave("vacinas"), []), ...(MOCK.vacinas[animal.nome] || [])].sort((a, b) => b.aplicacao.localeCompare(a.aplicacao));
+      $("vacinas").innerHTML = lista.length ? lista.map((v) => `
+        <tr><td class="destaque">${escapar(v.vacina)}</td><td>${dataBR(v.aplicacao)}</td><td>${dataBR(v.proxima)}</td><td>${statusVacina(v.proxima)}</td></tr>`).join("")
+        : `<tr><td colspan="4" class="vazio">Nenhuma vacina registrada.</td></tr>`;
+    }
+    const umAnoDepois = (iso) => { const d = new Date(iso + "T00:00"); d.setFullYear(d.getFullYear() + 1); return isoData(d); };
+    const vacinasDaEspecie = () => (VACINAS[animal.especie] || ["Antirrábica", "Outra"]).map((v) => [v, v]);
+
+    function salvarVacina(d) {
+      const lista = Local.ler(chave("vacinas"), []);
+      lista.push({ vacina: d.vacina.replace(/ \(.*\)/, ""), fabricante: d.fabricante, lote: d.lote,
+        aplicacao: d.aplicacao, proxima: d.proxima || null, observacoes: d.observacoes || "", vet: usuario.nome });
+      Local.gravar(chave("vacinas"), lista);
+      toast("Vacina registrada.");
+      renderVacinas();
+    }
+
+    // Formulário fixo da aba Vacinação
+    $("aplicacao").onchange = () => { $("proxima").value = umAnoDepois($("aplicacao").value); };
+    $("formVacina").onsubmit = (e) => {
+      e.preventDefault();
+      salvarVacina({ vacina: $("vacina").value, fabricante: $("fabricante").value.trim(), lote: $("lote").value.trim(),
+        aplicacao: $("aplicacao").value, proxima: $("proxima").value, observacoes: $("obsVacina").value.trim() });
+      $("formVacina").reset();
+      prepararVacina();
+    };
+    function prepararVacina() {
+      $("vacina").innerHTML = opcoes(vacinasDaEspecie());
+      $("aplicacao").value = isoData(new Date());
+      $("aplicacao").onchange();
+      if (!pode("prontuario", "editar")) $("formVacina").hidden = true;
+    }
+
+    // Popup "Registrar vacina" (botão do topo, disponível nas duas abas)
+    function abrirPopupVacina() {
+      const hoje = isoData(new Date());
+      abrirModal({
+        titulo: "Registrar vacina",
+        largura: "estreita",
+        campos: [
+          { nome: "vacina", rotulo: "Vacina", tipo: "select", obrigatorio: true, largura: "inteira", opcoes: vacinasDaEspecie() },
+          { nome: "fabricante", rotulo: "Fabricante", obrigatorio: true, largura: "inteira" },
+          { nome: "lote", rotulo: "Lote", obrigatorio: true, largura: "inteira" },
+          { nome: "aplicacao", rotulo: "Data de aplicação", tipo: "date", obrigatorio: true, attrs: `max="${hoje}"` },
+          { nome: "proxima", rotulo: "Próxima dose / reforço", tipo: "date" },
+          { nome: "observacoes", rotulo: "Observações", tipo: "textarea", largura: "inteira" },
+        ],
+        valores: { aplicacao: hoje, proxima: umAnoDepois(hoje) },
+        textoSalvar: "Salvar vacina",
+        aoAbrir: (form) => {
+          form.elements.aplicacao.onchange = () => { form.elements.proxima.value = umAnoDepois(form.elements.aplicacao.value); };
+        },
+        aoSalvar: async (d) => salvarVacina(d),
+      });
+    }
+
+    /* ---------- Carregamento ---------- */
+    async function carregar() {
+      [animal, agendamentos] = await Promise.all([
+        api(`/animais/${animalId}`),
+        api("/agendamentos", { query: { animal_id: animalId } }),
+      ]);
+      document.title = `Prontuário · ${animal.nome} · VetCare`;
+      $("titulo").textContent = `Prontuário · ${animal.nome}`;
+      $("tituloRegistro").textContent = `Registrar atendimento · ${dataBR(new Date())}`;
+      renderHistorico();
+      renderVacinas();
+      if (!pode("prontuario", "editar")) $("formAtendimento").hidden = true;
+    }
+
+    (async () => {
+      mostrarAba(parametro("aba") === "vacinacao" ? "vacinacao" : "atendimento");
+      try { await carregar(); } catch (e) { return toast(e.message, "erro"); }
+      prepararVacina();
+      const rascunho = Local.ler(chave("rascunho"), null);
+      if (rascunho) CAMPOS_AT.forEach((c) => ($(c).value = rascunho[c] || ""));
+    })();
+  </script>
+</body>
+</html>

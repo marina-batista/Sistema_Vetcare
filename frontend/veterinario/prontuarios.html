@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prontuários · VetCare</title>
+  <link rel="icon" href="/assets/simbolo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Módulo Veterinário · Tela: Prontuários (busca de animais — usa REQ 05) -->
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="conteudo">
+      <header class="topo">
+        <div>
+          <h1 id="titulo">Prontuários</h1>
+          <p class="sub" id="sub">Busque um animal para abrir o histórico completo</p>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="filtros">
+          <input class="busca" id="busca" type="search" placeholder="Buscar por animal ou tutor" aria-label="Buscar por animal ou tutor">
+          <select id="especie" aria-label="Filtrar por espécie"><option value="">Todas as espécies</option></select>
+        </div>
+        <div class="tabela-wrap">
+          <table class="tabela">
+            <thead><tr><th>Animal</th><th>Espécie e raça</th><th>Tutor</th><th>Último atendimento</th><th>Ações</th></tr></thead>
+            <tbody id="tbody"><tr><td colspan="5" class="vazio">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="rodape-tabela" id="rodape"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const usuario = exigirLogin("prontuario");
+    const aba = parametro("aba") === "vacinacao" ? "vacinacao" : "";
+    montarLayout(usuario, aba ? "vacinacao" : "prontuarios");
+    const $ = (id) => document.getElementById(id);
+    if (aba) { $("titulo").textContent = "Vacinação"; $("sub").textContent = "Escolha o animal para registrar ou consultar vacinas"; }
+    $("especie").innerHTML += opcoes(["Cão", "Gato", "Ave", "Roedor", "Réptil", "Outro"].map((e) => [e, e]));
+    let pagina = 1;
+
+    async function carregar() {
+      try {
+        const r = await api("/animais", { query: { q: $("busca").value.trim(), especie: $("especie").value, pagina, tamanho: 7 } });
+        $("tbody").innerHTML = r.itens.length ? r.itens.map((a) => `
+          <tr>
+            <td class="destaque">${escapar(a.nome)}</td>
+            <td>${escapar(a.especie)} · ${escapar(a.raca || "—")}</td>
+            <td>${escapar(a.tutor_nome)}</td>
+            <td>${a.em_atendimento ? "Hoje (em atendimento)" : dataBR(a.ultimo_atendimento)}</td>
+            <td><a class="link-acao" href="/veterinario/prontuario.html?id=${a.id}${aba ? "&aba=vacinacao" : ""}">Abrir prontuário</a></td>
+          </tr>`).join("") : `<tr><td colspan="5" class="vazio">Nenhum animal encontrado.</td></tr>`;
+        renderPaginacao($("rodape"), r, (p) => { pagina = p; carregar(); });
+      } catch (e) { toast(e.message, "erro"); }
+    }
+    $("busca").oninput = debounce(() => { pagina = 1; carregar(); });
+    $("especie").onchange = () => { pagina = 1; carregar(); };
+    carregar();
+  </script>
+</body>
+</html>
