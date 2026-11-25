@@ -1,4 +1,4 @@
-# VetCare — Etapa 2 (Sprint 1)
+# VetCare 
 
 Sistema de gestão para clínica veterinária — Engenharia de Software 1 (UFBA).
 **Arquitetura:** Monolito Modular em camadas (Etapa 1, ADR 002), implementado com **FastAPI** + SQLite no backend e HTML/CSS/JavaScript no frontend (ADR 007).
