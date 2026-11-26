@@ -10,8 +10,7 @@
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-  <!-- Módulo Veterinário · Tela: Prescrições + popup "Emitir prescrição" (js/prescricao.js)
-       Fora da Sprint 1: prescrições ficam no navegador (localStorage) + exemplos de mock.js. -->
+  <!-- Módulo Veterinário · Tela: Prescrições + popup "Emitir prescrição" (js/prescricao.js) — REQ 13 -->
   <div class="app">
     <aside class="sidebar" id="sidebar"></aside>
     <main class="conteudo">
@@ -44,27 +43,31 @@
   <script src="/js/api.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/layout.js"></script>
-  <script src="/js/mock.js"></script>
   <script src="/js/prescricao.js"></script>
   <script>
     const usuario = exigirLogin("prontuario");
     montarLayout(usuario, "prescricoes");
     const $ = (id) => document.getElementById(id);
-    $("sub").textContent = `Prescrições emitidas por ${usuario.nome}`;
-    let pagina = 1, filtradas = [], animais = null;
+    $("sub").textContent = "Prescrições emitidas pela clínica";
+    let pagina = 1, filtradas = [], todas = [], animais = null;
 
     const resumoMed = (m) => m[0].nome + (m.length > 1 ? ` +${m.length - 1}` : "");
+
+    async function carregar() {
+      try { todas = await api("/prescricoes"); } catch (e) { return toast(e.message, "erro"); }
+      render();
+    }
 
     function render() {
       const q = $("busca").value.trim().toLowerCase();
       const dias = Number($("periodo").value);
       const limite = dias ? isoData(somarDias(new Date(), -dias)) : "";
-      filtradas = todasPrescricoes().filter((p) => (!limite || p.data >= limite) &&
-        (!q || [p.animal, p.tutor, ...p.medicamentos.map((m) => m.nome)].some((t) => t.toLowerCase().includes(q))));
+      filtradas = todas.filter((p) => (!limite || isoData(new Date(p.data)) >= limite) &&
+        (!q || [p.animal_nome, p.tutor_nome, ...p.medicamentos.map((m) => m.nome)].some((t) => (t || "").toLowerCase().includes(q))));
       const visiveis = filtradas.slice((pagina - 1) * 7, pagina * 7);
       $("tbody").innerHTML = visiveis.length ? visiveis.map((p) => `
         <tr>
-          <td>${dataBR(p.data)}</td><td class="destaque">${escapar(p.animal)}</td><td>${escapar(p.tutor)}</td>
+          <td>${dataBR(p.data)}</td><td class="destaque">${escapar(p.animal_nome)}</td><td>${escapar(p.tutor_nome)}</td>
           <td>${escapar(resumoMed(p.medicamentos))}</td>
           <td><div class="acoes"><button class="link-acao" data-ver="${p.id}">Ver</button><button class="link-acao" data-pdf="${p.id}">Baixar PDF</button></div></td>
         </tr>`).join("") : `<tr><td colspan="5" class="vazio">Nenhuma prescrição encontrada.</td></tr>`;
@@ -73,7 +76,7 @@
 
     $("tbody").onclick = (e) => {
       const b = e.target.closest("button"); if (!b) return;
-      const p = todasPrescricoes().find((x) => x.id === (b.dataset.ver || b.dataset.pdf));
+      const p = todas.find((x) => x.id === Number(b.dataset.ver || b.dataset.pdf));
       if (b.dataset.ver) abrirDialogo("Prescrição", htmlPrescricao(p)); else imprimirPrescricao(p);
     };
 
@@ -81,14 +84,14 @@
       try { if (!animais) ({ itens: animais } = await api("/animais", { query: { tamanho: 500 } })); }
       catch (e) { return toast(e.message, "erro"); }
       const animal = animais.find((a) => a.id === Number(animalId)) || null;
-      abrirPrescricao({ animal, animais, usuario, aoEmitir: () => { pagina = 1; render(); } });
+      abrirPrescricao({ animal, animais, usuario, aoEmitir: () => { pagina = 1; carregar(); } });
     }
 
     $("btnNova").onclick = () => novaPrescricao(null);
     $("btnNova").hidden = !pode("prontuario", "editar");
     $("busca").oninput = debounce(() => { pagina = 1; render(); }, 150);
     $("periodo").onchange = () => { pagina = 1; render(); };
-    render();
+    carregar();
     if (parametro("nova")) novaPrescricao(parametro("animal_id"));
   </script>
 </body>

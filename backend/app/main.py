@@ -15,6 +15,9 @@ from .core.database import Base, SessionLocal, engine
 from .modulos.agendamento import rotas as rotas_agendamento
 from .modulos.autenticacao import rotas_auth, rotas_usuarios
 from .modulos.cadastros import rotas_animais, rotas_tutores, rotas_veterinarios
+from .modulos.clinico import rotas_prescricoes, rotas_prontuario, rotas_vacinas
+from .modulos.financeiro import rotas_dashboard, rotas_pagamentos
+from .modulos.notificacoes import rotas as rotas_notificacoes
 from .seed import popular_se_vazio
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
@@ -44,18 +47,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="VetCare API",
-    description="Monolito Modular — módulos Autenticação (REQ 01–03), Cadastros (REQ 04–06) "
-                "e Agendamento (REQ 07–09).",
-    version="1.0.0",
+    description="Monolito Modular — Autenticação (REQ 01–03), Cadastros (REQ 04–06), Agendamento (REQ 07–09), "
+                "Clínico (REQ 10–13), Financeiro (REQ 14, 15, 17) e Notificações (REQ 16).",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
 # Rotas da API (todas começam com /api), agrupadas pelos módulos do Monolito Modular (Etapa 1 — ADR 002).
-# Clínico, Financeiro e Notificações entram aqui quando forem implementados.
 MODULOS = {
     "Autenticação": (rotas_auth, rotas_usuarios),
     "Cadastros": (rotas_tutores, rotas_animais, rotas_veterinarios),
     "Agendamento": (rotas_agendamento,),
+    "Clínico": (rotas_prontuario, rotas_vacinas, rotas_prescricoes),
+    "Financeiro": (rotas_pagamentos, rotas_dashboard),
+    "Notificações": (rotas_notificacoes,),
 }
 for rotas in MODULOS.values():
     for r in rotas:

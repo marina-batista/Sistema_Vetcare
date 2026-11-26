@@ -10,8 +10,7 @@
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-  <!-- Módulo Administração · Tela: Relatórios gerenciais
-       Atendimentos/Agenda/Animais usam a API real (REQ 05 e 07); Faturamento usa dados de exemplo. -->
+  <!-- Módulo Administração · Tela: Relatórios gerenciais (REQ 17) — todos os tipos usam a API real -->
   <div class="app">
     <aside class="sidebar" id="sidebar"></aside>
     <main class="conteudo">
@@ -51,7 +50,6 @@
           <div class="cards-tipo nao-imprimir" id="cards"></div>
           <section class="card">
             <h2 id="tituloPrevia">Pré-visualização</h2>
-            <p class="aviso-mock" id="avisoMock" hidden>Faturamento: dados de exemplo (módulo de pagamentos previsto para a próxima sprint).</p>
             <div class="tabela-wrap"><table class="tabela" id="previa"></table></div>
             <div class="botoes-form nao-imprimir">
               <button class="btn" data-exportar="pdf">Exportar PDF</button>
@@ -67,7 +65,6 @@
   <script src="/js/api.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/layout.js"></script>
-  <script src="/js/mock.js"></script>
   <script>
     const usuario = exigirLogin("relatorios");
     montarLayout(usuario, "relatorios");
@@ -100,22 +97,27 @@
     async function montar() {
       const tipo = $("tipo").value;
       const vetNome = $("vet").selectedOptions[0].textContent;
-      $("avisoMock").hidden = tipo !== "faturamento";
       if (tipo === "atendimentos" || tipo === "agenda") {
         const ags = await api("/agendamentos", { query: { data_inicio: $("inicio").value, data_fim: $("fim").value, veterinario_id: $("vet").value } });
+        // Faturamento por grupo: soma os pagamentos ligados aos agendamentos do grupo
+        let pagos = [];
+        if (tipo === "atendimentos") pagos = await api("/pagamentos", { query: { data_inicio: $("inicio").value, data_fim: $("fim").value, limite: 500 } });
+        const somaPag = new Map();
+        pagos.forEach((p) => { if (p.agendamento_id) somaPag.set(p.agendamento_id, (somaPag.get(p.agendamento_id) || 0) + p.valor); });
         const grupos = new Map();
         ags.forEach((a) => {
           const k = chaveGrupo(a);
-          if (!grupos.has(k)) grupos.set(k, { total: 0, concl: 0, canc: 0 });
+          if (!grupos.has(k)) grupos.set(k, { total: 0, concl: 0, canc: 0, fat: 0 });
           const g = grupos.get(k); g.total++;
           if (a.status === "cancelado") g.canc++; if (a.status === "concluido") g.concl++;
+          g.fat += somaPag.get(a.id) || 0;
         });
         const linhas = [...grupos.entries()].reverse();
         const soma = (c) => linhas.reduce((s, [, g]) => s + g[c], 0);
         if (tipo === "atendimentos") {
           return { cabecalho: ["Grupo", "Veterinário", "Atendimentos", "Cancelados", "Faturamento"],
-            linhas: linhas.map(([k, g]) => [k, vetNome, g.total - g.canc, g.canc, "—"]),
-            total: ["Total", "", soma("total") - soma("canc"), soma("canc"), "—"] };
+            linhas: linhas.map(([k, g]) => [k, vetNome, g.total - g.canc, g.canc, moeda(g.fat)]),
+            total: ["Total", "", soma("total") - soma("canc"), soma("canc"), moeda(soma("fat"))] };
         }
         const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0) + "%";
         return { cabecalho: ["Grupo", "Agendados", "Concluídos", "Cancelados", "% cancelamento"],
@@ -133,9 +135,10 @@
         const linhas = [...grupos.entries()].sort().map(([k, g]) => [...k.split("|"), g.qtd, g.tutores.size]);
         return { cabecalho: ["Espécie", "Raça", "Animais", "Tutores"], linhas, total: ["Total", "", itens.length, new Set(itens.map((a) => a.tutor_id)).size] };
       }
-      const linhas = MOCK.faturamento.map((f) => [f.grupo, f.qtd, moeda(f.valor)]);
-      return { cabecalho: ["Forma de pagamento", "Recebimentos", "Valor"], linhas,
-        total: ["Total", MOCK.faturamento.reduce((s, f) => s + f.qtd, 0), moeda(MOCK.faturamento.reduce((s, f) => s + f.valor, 0))] };
+      const r = await api("/financeiro/relatorio-faturamento", { query: { data_inicio: $("inicio").value, data_fim: $("fim").value } });
+      return { cabecalho: ["Forma de pagamento", "Recebimentos", "Valor"],
+        linhas: r.linhas.map((f) => [f.forma, f.recebimentos, moeda(f.valor)]),
+        total: ["Total", r.total_recebimentos, moeda(r.total_valor)] };
     }
 
     async function atualizar() {

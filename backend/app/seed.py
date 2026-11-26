@@ -8,6 +8,9 @@ from .modulos.agendamento.modelos import Agendamento
 from .modulos.autenticacao.modelos import Usuario
 from .modulos.autenticacao.seguranca import hash_senha, normalizar_permissoes
 from .modulos.cadastros.modelos import Animal, Tutor, Veterinario
+from .modulos.clinico.modelos import Atendimento, Prescricao, Vacina
+from .modulos.financeiro.modelos import Pagamento
+from .modulos.financeiro.servicos import preco_sugerido
 
 SENHA_PADRAO = "vetcare123"
 
@@ -155,5 +158,81 @@ def popular_se_vazio(db: Session) -> None:
         (170, "Luna", leticia), (220, "Bidu", rafael),
     ]:
         ag(_dia_util_anterior(hoje - timedelta(days=dias_atras)), "10:00", animal, vet, "Consulta", "concluido")
+
+    db.commit()
+    _popular_clinico_e_financeiro(db, animais, {"Camila Rocha": camila, "Rafael Nunes": rafael, "Letícia Prado": leticia})
+
+
+# ---------- Dados dos módulos Clínico e Financeiro (REQ 10–15) ----------
+def _popular_clinico_e_financeiro(db: Session, animais: dict, vets: dict) -> None:
+    """Cria atendimentos (prontuário), vacinas, prescrições e pagamentos a partir das consultas concluídas."""
+    hoje = date.today()
+
+    # Atendimentos (REQ 10/11): registra uma consulta concluída recente de alguns animais
+    historico = [
+        ("Thor", "Camila Rocha", "Otite externa leve.", "Limpeza e antibiótico tópico por 7 dias; retorno em 15 dias.",
+         "Tutor relata coceira na orelha há 3 dias.", "38,6 °C", "92 bpm", "31 kg"),
+        ("Mel", "Rafael Nunes", "Check-up sem alterações.", "Manter dieta e vermifugação em dia.",
+         "Retorno de rotina.", "38,4 °C", "96 bpm", "8 kg"),
+        ("Bob", "Camila Rocha", "Gastroenterite aguda.", "Dieta leve, hidratação e protetor gástrico por 5 dias.",
+         "Vômito e apatia desde ontem.", "39,1 °C", "110 bpm", "12 kg"),
+        ("Pipoca", "Letícia Prado", "Dermatite alérgica.", "Shampoo medicamentoso 2x/semana por 4 semanas.",
+         "Lesões na região dorsal.", "38,7 °C", "104 bpm", "6 kg"),
+        ("Zeca", "Camila Rocha", "Consulta de rotina.", "Vacinação em dia; peso adequado.",
+         "Sem queixas.", "38,5 °C", "100 bpm", "9 kg"),
+    ]
+    atendimentos = {}
+    for i, (an, vet_nome, diag, proc, anam, temp, fc, peso) in enumerate(historico):
+        at = Atendimento(
+            animal=animais[an], veterinario=vets.get(vet_nome),
+            veterinario_nome=f"Dr(a). {vet_nome}", data_hora=datetime.combine(
+                _dia_util_anterior(hoje - timedelta(days=30 + i * 12)), time(10, 0)),
+            diagnostico=diag, procedimentos=proc, anamnese=anam, exame_fisico="Mucosas normocoradas.",
+            temperatura=temp, freq_cardiaca=fc, peso=peso,
+            observacoes="Retorno conforme orientação.",
+        )
+        db.add(at)
+        atendimentos[an] = at
+
+    # Vacinas (REQ 12): algumas em dia e outras vencendo nos próximos 30 dias (geram notificação)
+    vacinas = [
+        ("Thor", "V10", "Zoetis", "A10021", hoje - timedelta(days=400), hoje - timedelta(days=35)),
+        ("Thor", "Antirrábica", "MSD", "R55410", hoje - timedelta(days=360), hoje + timedelta(days=5)),
+        ("Luna", "V4 (felina)", "Zoetis", "F20110", hoje - timedelta(days=350), hoje + timedelta(days=12)),
+        ("Nina", "Antirrábica", "MSD", "R77820", hoje - timedelta(days=340), hoje + timedelta(days=20)),
+        ("Mel", "V10", "Ceva", "C88100", hoje - timedelta(days=200), hoje + timedelta(days=165)),
+        ("Bob", "Giárdia", "Zoetis", "G44021", hoje - timedelta(days=120), None),
+    ]
+    for an, nome, fab, lote, aplic, prox in vacinas:
+        db.add(Vacina(animal=animais[an], vacina=nome, fabricante=fab, lote=lote,
+                      data_aplicacao=aplic, proxima_dose=prox, veterinario_nome="Dra. Camila Rocha"))
+
+    # Prescrições (REQ 13): vinculadas a alguns atendimentos
+    db.add(Prescricao(
+        animal=animais["Thor"], atendimento=atendimentos["Thor"], veterinario_nome="Dra. Camila Rocha",
+        data=atendimentos["Thor"].data_hora,
+        medicamentos=[
+            {"nome": "Antibiótico tópico otológico", "dosagem": "5 gotas", "frequencia": "2× ao dia por 7 dias",
+             "instrucoes": "Aplicar no ouvido esquerdo."},
+            {"nome": "Anti-inflamatório oral", "dosagem": "1 comprimido", "frequencia": "1× ao dia por 3 dias",
+             "instrucoes": "Administrar após a refeição."},
+        ],
+        observacoes="Retornar em 15 dias para reavaliação."))
+    db.add(Prescricao(
+        animal=animais["Bob"], atendimento=atendimentos["Bob"], veterinario_nome="Dra. Camila Rocha",
+        data=atendimentos["Bob"].data_hora,
+        medicamentos=[{"nome": "Protetor gástrico", "dosagem": "1 comprimido", "frequencia": "A cada 12h por 5 dias",
+                       "instrucoes": "Em jejum."}],
+        observacoes="Dieta leve por 3 dias."))
+
+    # Pagamentos (REQ 14/15): recebimento das consultas concluídas (deixa algumas sem pagar = "a receber")
+    concluidos = db.query(Agendamento).filter(Agendamento.status == "concluido").order_by(Agendamento.data_hora).all()
+    formas = ["Pix", "Cartão", "Dinheiro", "Pix", "Cartão", "Pix"]
+    for i, a in enumerate(concluidos):
+        if i % 7 == 5:  # deixa ~1 em cada 7 sem pagamento registrado
+            continue
+        db.add(Pagamento(agendamento_id=a.id, animal_id=a.animal_id, valor=preco_sugerido(a.tipo),
+                         forma=formas[i % len(formas)], parcelas=1, data=a.data_hora.date(),
+                         registrado_por="Marina"))
 
     db.commit()

@@ -10,8 +10,7 @@
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-  <!-- Módulo Recepção · Tela: Registrar pagamento
-       Fora da Sprint 1: lista os atendimentos reais (REQ 07), mas preços e recebimentos são simulados (mock.js + localStorage). -->
+  <!-- Módulo Recepção · Tela: Registrar pagamento (REQ 14) — pagamentos e preços vêm da API -->
   <div class="app">
     <aside class="sidebar" id="sidebar"></aside>
     <main class="conteudo">
@@ -21,8 +20,6 @@
           <p class="sub">Recebimento de consultas e procedimentos</p>
         </div>
       </header>
-      <p class="aviso-mock">Simulação — os recebimentos ficam salvos só neste navegador até o módulo de pagamentos entrar na API.</p>
-
       <div class="grid-2-igual">
         <div>
           <section class="card">
@@ -67,14 +64,13 @@
   <script src="/js/api.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/layout.js"></script>
-  <script src="/js/mock.js"></script>
   <script>
     const usuario = exigirLogin("pagamentos");
     montarLayout(usuario, "pagamentos");
     const $ = (id) => document.getElementById(id);
-    let atendimentos = [], forma = "Pix";
+    let atendimentos = [], precos = {}, forma = "Pix";
 
-    function total(a) { return a ? MOCK.precos[a.tipo] || 0 : 0; }
+    function total(a) { return a ? (precos[a.tipo] || 0) : 0; }
 
     function renderItens() {
       const a = atendimentos.find((x) => x.id === Number($("atendimento").value));
@@ -85,9 +81,13 @@
       $("valor").value = total(a).toFixed(2);
     }
 
-    function renderUltimos() {
-      const lista = [...Local.ler("pagamentos", []), ...MOCK.recebimentos].slice(0, 6);
-      $("ultimos").innerHTML = lista.map((r) => `<tr><td>${escapar(r.animal)}</td><td>${moeda(r.valor)}</td><td>${escapar(r.forma)}</td><td>${escapar(r.quando)}</td></tr>`).join("");
+    async function renderUltimos() {
+      try {
+        const lista = await api("/pagamentos", { query: { limite: 6 } });
+        $("ultimos").innerHTML = lista.length
+          ? lista.map((r) => `<tr><td>${escapar(r.animal_nome || "—")}</td><td>${moeda(r.valor)}</td><td>${escapar(r.forma)}</td><td>${quando(r.criado_em)}</td></tr>`).join("")
+          : `<tr><td colspan="4" class="vazio">Nenhum recebimento ainda.</td></tr>`;
+      } catch (e) { toast(e.message, "erro"); }
     }
 
     $("formas").onclick = (e) => {
@@ -99,15 +99,19 @@
     };
     $("atendimento").onchange = renderItens;
 
-    $("form").onsubmit = (e) => {
+    $("form").onsubmit = async (e) => {
       e.preventDefault();
       const a = atendimentos.find((x) => x.id === Number($("atendimento").value));
       if (!a) return toast("Selecione um atendimento.", "erro");
-      const lista = Local.ler("pagamentos", []);
-      lista.unshift({ animal: a.animal_nome, valor: Number($("valor").value), forma, quando: quando(new Date()) });
-      Local.gravar("pagamentos", lista.slice(0, 20));
-      toast(`Recebimento de ${moeda($("valor").value)} registrado (${forma}).`);
-      renderUltimos();
+      try {
+        await api("/pagamentos", { method: "POST", body: {
+          agendamento_id: a.id, animal_id: a.animal_id, valor: Number($("valor").value), forma,
+          parcelas: Number($("parcelas").value) || 1, data: $("data").value, observacoes: $("obs").value.trim() || null,
+        } });
+        toast(`Recebimento de ${moeda($("valor").value)} registrado (${forma}).`);
+        $("obs").value = "";
+        renderUltimos();
+      } catch (err) { toast(err.message, "erro"); }
     };
     $("form").onreset = () => setTimeout(() => { $("data").value = isoData(new Date()); renderItens(); });
 
@@ -116,9 +120,12 @@
       $("parcelas").disabled = true;
       try {
         const hoje = new Date();
-        atendimentos = await api("/agendamentos", { query: {
-          data_inicio: isoData(somarDias(hoje, -7)), data_fim: isoData(hoje), status: "concluido,em_atendimento,aguardando",
-        } });
+        [atendimentos, precos] = await Promise.all([
+          api("/agendamentos", { query: {
+            data_inicio: isoData(somarDias(hoje, -7)), data_fim: isoData(hoje), status: "concluido,em_atendimento,aguardando",
+          } }),
+          api("/pagamentos/precos"),
+        ]);
         atendimentos.reverse();
       } catch (e) { toast(e.message, "erro"); }
       $("atendimento").innerHTML = atendimentos.length

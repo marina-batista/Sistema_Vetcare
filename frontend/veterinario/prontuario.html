@@ -10,9 +10,8 @@
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-  <!-- Módulo Veterinário · Telas: Prontuário (aba Atendimento) e Vacinação (aba Vacinação)
-       Dados do animal e status do atendimento vêm da API (REQ 05/07).
-       Registro clínico e vacinas ficam fora da Sprint 1: salvos no navegador (localStorage).
+  <!-- Módulo Veterinário · Telas: Prontuário (aba Atendimento) e Vacinação (aba Vacinação) — REQ 10, 11, 12, 13
+       Atendimentos (/atendimentos), vacinas (/vacinas) e prescrições (/prescricoes) vêm da API.
        Popups: "Registrar vacina" e "Emitir prescrição" (js/prescricao.js). -->
   <div class="app">
     <aside class="sidebar" id="sidebar"></aside>
@@ -89,7 +88,6 @@
   <script src="/js/api.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/layout.js"></script>
-  <script src="/js/mock.js"></script>
   <script src="/js/prescricao.js"></script>
   <script>
     const usuario = exigirLogin("prontuario");
@@ -100,12 +98,13 @@
       throw new Error("Animal não informado");
     }
 
-    let animal = null, agendamentos = [];
-    const chave = (tipo) => `${tipo}_${animalId}`;
+    let animal = null, agendamentos = [], atendimentos = [], vacinas = [];
+    const chaveRascunho = `vetcare_rascunho_${animalId}`;
     const VACINAS = {
       Cão: ["V10 (polivalente)", "V8 (polivalente)", "Antirrábica", "Giárdia", "Gripe canina", "Leishmaniose"],
       Gato: ["V4 (felina)", "V5 (felina)", "V3 (felina)", "Antirrábica", "FeLV"],
     };
+    const COR_VACINA = { "Em dia": "verde", "Vence em breve": "laranja", "Vence hoje": "laranja", Vencida: "vermelho", "Dose única": "verde" };
 
     /* ---------- Abas ---------- */
     function mostrarAba(nome) {
@@ -124,89 +123,79 @@
     $("btnPrescricao").onclick = () => abrirPrescricao({ animal, usuario });
     $("btnPrescricao").hidden = !pode("prontuario", "editar");
 
-    /* ---------- Atendimento ---------- */
-    function registros() {
-      const locais = Local.ler(chave("prontuario"), []);
-      const exemplo = MOCK.historicoClinico[animal.nome] || [];
-      return [...locais, ...exemplo].sort((a, b) => b.data.localeCompare(a.data));
-    }
-
+    /* ---------- Atendimento (REQ 10/11) ---------- */
     function renderHistorico() {
-      const lista = registros();
-      // Consultas concluídas sem registro clínico também aparecem (vêm da agenda)
-      const datasComRegistro = new Set(lista.map((r) => r.data));
+      const registros = atendimentos.map((a) => ({
+        data: a.data_hora, vet: a.veterinario_nome, diagnostico: a.diagnostico,
+        observacoes: a.procedimentos || a.observacoes, peso: a.peso,
+      }));
+      // Consultas concluídas sem atendimento registrado também aparecem (vêm da agenda)
+      const diasComRegistro = new Set(registros.map((r) => isoData(new Date(r.data))));
       const semRegistro = agendamentos
-        .filter((a) => a.status === "concluido" && !datasComRegistro.has(isoData(new Date(a.data_hora))))
-        .map((a) => ({ data: isoData(new Date(a.data_hora)), vet: a.veterinario_nome, diagnostico: `${a.tipo} — atendimento concluído.`, observacoes: "Sem registro clínico detalhado." }));
-      const tudo = [...lista, ...semRegistro].sort((a, b) => b.data.localeCompare(a.data));
+        .filter((a) => a.status === "concluido" && !diasComRegistro.has(isoData(new Date(a.data_hora))))
+        .map((a) => ({ data: a.data_hora, vet: a.veterinario_nome, diagnostico: `${a.tipo} — atendimento concluído.`, observacoes: "Sem registro clínico detalhado." }));
+      const tudo = [...registros, ...semRegistro].sort((a, b) => b.data.localeCompare(a.data));
       $("historico").innerHTML = tudo.length ? tudo.map((r) => `
         <div class="timeline-item">
           <h4>${dataBR(r.data)} · ${escapar(r.vet)}</h4>
           <p>Diagnóstico: ${escapar(r.diagnostico)}</p>
           ${r.observacoes ? `<p>Observações: ${escapar(r.observacoes)}</p>` : ""}
         </div>`).join("") : `<p class="vazio">Nenhum atendimento anterior.</p>`;
-      const peso = lista.find((r) => r.peso);
+      const peso = registros.find((r) => r.peso);
       $("resumo").textContent = [animal.raca || animal.especie, animal.sexo, idade(animal.data_nascimento), peso && peso.peso, `Tutor(a): ${animal.tutor_nome}`].filter(Boolean).join(" · ");
     }
 
     const CAMPOS_AT = ["anamnese", "exame", "temperatura", "fc", "peso", "hipotese", "procedimentos"];
     function lerForm() { return Object.fromEntries(CAMPOS_AT.map((c) => [c, $(c).value.trim()])); }
 
-    $("btnRascunho").onclick = () => { Local.gravar(chave("rascunho"), lerForm()); toast("Rascunho salvo."); };
+    $("btnRascunho").onclick = () => { localStorage.setItem(chaveRascunho, JSON.stringify(lerForm())); toast("Rascunho salvo."); };
 
     $("formAtendimento").onsubmit = async (e) => {
       e.preventDefault();
       const d = lerForm();
-      const lista = Local.ler(chave("prontuario"), []);
-      lista.push({ data: isoData(new Date()), vet: usuario.nome, diagnostico: d.hipotese,
-        observacoes: d.procedimentos, anamnese: d.anamnese, exame: d.exame, temperatura: d.temperatura, fc: d.fc, peso: d.peso });
-      Local.gravar(chave("prontuario"), lista);
-      localStorage.removeItem("vetcare_" + chave("rascunho"));
-      // Integração com a agenda (REQ 07): conclui o atendimento em andamento deste animal
+      // Integração com a agenda (REQ 07): o atendimento em andamento deste animal é concluído pelo backend
       const emAndamento = agendamentos.find((a) => a.status === "em_atendimento");
       try {
-        if (emAndamento) await api(`/agendamentos/${emAndamento.id}/status`, { method: "PATCH", body: { status: "concluido" } });
-        toast("Atendimento finalizado.");
+        await api("/atendimentos", { method: "POST", body: {
+          animal_id: animalId, agendamento_id: emAndamento ? emAndamento.id : null,
+          anamnese: d.anamnese || null, exame_fisico: d.exame || null, temperatura: d.temperatura || null,
+          freq_cardiaca: d.fc || null, peso: d.peso || null, diagnostico: d.hipotese, procedimentos: d.procedimentos || null,
+        } });
+        localStorage.removeItem(chaveRascunho);
+        toast("Atendimento registrado.");
         $("formAtendimento").reset();
         await carregar();
       } catch (err) { $("erroAt").textContent = err.message; }
     };
 
-    /* ---------- Vacinação ---------- */
-    function statusVacina(proxima) {
-      if (!proxima) return badge("Dose única", "verde");
-      const hoje = isoData(new Date());
-      if (proxima < hoje) return badge("Vencida", "vermelho");
-      if (proxima === hoje) return badge("Vence hoje", "laranja");
-      if (proxima <= isoData(somarDias(new Date(), 30))) return badge("Vence em breve", "laranja");
-      return badge("Em dia", "verde");
-    }
+    /* ---------- Vacinação (REQ 12) ---------- */
     function renderVacinas() {
-      const lista = [...Local.ler(chave("vacinas"), []), ...(MOCK.vacinas[animal.nome] || [])].sort((a, b) => b.aplicacao.localeCompare(a.aplicacao));
-      $("vacinas").innerHTML = lista.length ? lista.map((v) => `
-        <tr><td class="destaque">${escapar(v.vacina)}</td><td>${dataBR(v.aplicacao)}</td><td>${dataBR(v.proxima)}</td><td>${statusVacina(v.proxima)}</td></tr>`).join("")
+      $("vacinas").innerHTML = vacinas.length ? vacinas.map((v) => `
+        <tr><td class="destaque">${escapar(v.vacina)}</td><td>${dataBR(v.data_aplicacao)}</td><td>${dataBR(v.proxima_dose)}</td><td>${badge(v.situacao, COR_VACINA[v.situacao] || "")}</td></tr>`).join("")
         : `<tr><td colspan="4" class="vazio">Nenhuma vacina registrada.</td></tr>`;
     }
     const umAnoDepois = (iso) => { const d = new Date(iso + "T00:00"); d.setFullYear(d.getFullYear() + 1); return isoData(d); };
     const vacinasDaEspecie = () => (VACINAS[animal.especie] || ["Antirrábica", "Outra"]).map((v) => [v, v]);
 
-    function salvarVacina(d) {
-      const lista = Local.ler(chave("vacinas"), []);
-      lista.push({ vacina: d.vacina.replace(/ \(.*\)/, ""), fabricante: d.fabricante, lote: d.lote,
-        aplicacao: d.aplicacao, proxima: d.proxima || null, observacoes: d.observacoes || "", vet: usuario.nome });
-      Local.gravar(chave("vacinas"), lista);
+    async function salvarVacina(d) {
+      await api("/vacinas", { method: "POST", body: {
+        animal_id: animalId, vacina: d.vacina.replace(/ \(.*\)/, ""), fabricante: d.fabricante || null,
+        lote: d.lote || null, data_aplicacao: d.aplicacao, proxima_dose: d.proxima || null, observacoes: d.observacoes || null,
+      } });
       toast("Vacina registrada.");
-      renderVacinas();
+      await carregar();
     }
 
     // Formulário fixo da aba Vacinação
     $("aplicacao").onchange = () => { $("proxima").value = umAnoDepois($("aplicacao").value); };
-    $("formVacina").onsubmit = (e) => {
+    $("formVacina").onsubmit = async (e) => {
       e.preventDefault();
-      salvarVacina({ vacina: $("vacina").value, fabricante: $("fabricante").value.trim(), lote: $("lote").value.trim(),
-        aplicacao: $("aplicacao").value, proxima: $("proxima").value, observacoes: $("obsVacina").value.trim() });
-      $("formVacina").reset();
-      prepararVacina();
+      try {
+        await salvarVacina({ vacina: $("vacina").value, fabricante: $("fabricante").value.trim(), lote: $("lote").value.trim(),
+          aplicacao: $("aplicacao").value, proxima: $("proxima").value, observacoes: $("obsVacina").value.trim() });
+        $("formVacina").reset();
+        prepararVacina();
+      } catch (err) { toast(err.message, "erro"); }
     };
     function prepararVacina() {
       $("vacina").innerHTML = opcoes(vacinasDaEspecie());
@@ -223,8 +212,8 @@
         largura: "estreita",
         campos: [
           { nome: "vacina", rotulo: "Vacina", tipo: "select", obrigatorio: true, largura: "inteira", opcoes: vacinasDaEspecie() },
-          { nome: "fabricante", rotulo: "Fabricante", obrigatorio: true, largura: "inteira" },
-          { nome: "lote", rotulo: "Lote", obrigatorio: true, largura: "inteira" },
+          { nome: "fabricante", rotulo: "Fabricante", largura: "inteira" },
+          { nome: "lote", rotulo: "Lote", largura: "inteira" },
           { nome: "aplicacao", rotulo: "Data de aplicação", tipo: "date", obrigatorio: true, attrs: `max="${hoje}"` },
           { nome: "proxima", rotulo: "Próxima dose / reforço", tipo: "date" },
           { nome: "observacoes", rotulo: "Observações", tipo: "textarea", largura: "inteira" },
@@ -240,9 +229,11 @@
 
     /* ---------- Carregamento ---------- */
     async function carregar() {
-      [animal, agendamentos] = await Promise.all([
+      [animal, agendamentos, atendimentos, vacinas] = await Promise.all([
         api(`/animais/${animalId}`),
         api("/agendamentos", { query: { animal_id: animalId } }),
+        api("/atendimentos", { query: { animal_id: animalId } }),
+        api("/vacinas", { query: { animal_id: animalId } }),
       ]);
       document.title = `Prontuário · ${animal.nome} · VetCare`;
       $("titulo").textContent = `Prontuário · ${animal.nome}`;
@@ -256,7 +247,7 @@
       mostrarAba(parametro("aba") === "vacinacao" ? "vacinacao" : "atendimento");
       try { await carregar(); } catch (e) { return toast(e.message, "erro"); }
       prepararVacina();
-      const rascunho = Local.ler(chave("rascunho"), null);
+      const rascunho = JSON.parse(localStorage.getItem(chaveRascunho) || "null");
       if (rascunho) CAMPOS_AT.forEach((c) => ($(c).value = rascunho[c] || ""));
     })();
   </script>

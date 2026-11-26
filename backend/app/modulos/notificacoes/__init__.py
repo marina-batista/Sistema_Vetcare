@@ -1,5 +1,6 @@
 """Módulo de Notificações — REQ 16 (Notificar Tutor): lembretes de consultas e vacinas.
 
-Previsto para a próxima sprint. As telas já existem no frontend e usam dados de exemplo
-(frontend/js/mock.js); ao implementar, crie aqui modelos.py, esquemas.py e rotas.py como nos outros módulos.
+- modelos.py: Notificacao (histórico de envios), ConfiguracaoNotificacao
+- rotas.py: /api/notificacoes (consultas, vacinas, histórico, enviar, config)
+O disparo real (WhatsApp/e-mail) é simulado — ver ADR do módulo.
 """

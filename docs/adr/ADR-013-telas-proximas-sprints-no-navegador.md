@@ -1,6 +1,6 @@
 # ADR 013: Telas das próximas sprints com dados no navegador (temporário)
 
-**Status:** Temporário, a ser substituído quando os módulos Clínico, Financeiro e de Notificações forem implementados
+**Status:** Substituído pelo ADR 014 (os módulos Clínico, Financeiro e de Notificações foram implementados na API no trabalho final)
 
 **Relação com a Etapa 1:** **desvio temporário da Figura 2**: nessas telas os dados não passam pela Camada de Negócio nem pela de Persistência.
 

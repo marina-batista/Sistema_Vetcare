@@ -1,7 +1,7 @@
 /* ==========================================================
-   prescricao.js — popup "Emitir prescrição" + geração do PDF
-   Usado em veterinario/prontuario.html e veterinario/prescricoes.html
-   (fora da Sprint 1: as prescrições ficam salvas no navegador)
+   prescricao.js — popup "Emitir prescrição" + geração do PDF (REQ 13)
+   Usado em veterinario/prontuario.html e veterinario/prescricoes.html.
+   As prescrições são salvas na API (POST /prescricoes) e o PDF é gerado no navegador.
    ========================================================== */
 
 /** Prescrições antigas guardavam só o nome do medicamento (texto); converte para objeto. */
@@ -9,31 +9,26 @@ function normalizarMedicamento(m) {
   return typeof m === "string" ? { nome: m, dosagem: "", frequencia: "", instrucoes: "" } : m;
 }
 
-function todasPrescricoes() {
-  return [...Local.ler("prescricoes", []), ...MOCK.prescricoes]
-    .map((p) => ({ ...p, medicamentos: p.medicamentos.map(normalizarMedicamento) }))
-    .sort((a, b) => b.data.localeCompare(a.data));
-}
-
 function htmlPrescricao(p) {
-  return `<p><strong>Data:</strong> ${dataBR(p.data)} · <strong>Veterinário(a):</strong> ${escapar(p.vet)}</p>
-    <p><strong>Animal:</strong> ${escapar(p.animal)} · <strong>Tutor(a):</strong> ${escapar(p.tutor)}</p>
+  const meds = (p.medicamentos || []).map(normalizarMedicamento);
+  return `<p><strong>Data:</strong> ${dataBR(p.data)} · <strong>Veterinário(a):</strong> ${escapar(p.veterinario_nome || p.vet)}</p>
+    <p><strong>Animal:</strong> ${escapar(p.animal_nome || p.animal)} · <strong>Tutor(a):</strong> ${escapar(p.tutor_nome || p.tutor || "—")}</p>
     <table class="tabela" style="margin:12px 0">
       <thead><tr><th>Medicamento</th><th>Dosagem</th><th>Frequência e duração</th><th>Instruções</th></tr></thead>
-      <tbody>${p.medicamentos.map((m) => `<tr><td>${escapar(m.nome)}</td><td>${escapar(m.dosagem || "—")}</td><td>${escapar(m.frequencia || "—")}</td><td>${escapar(m.instrucoes || "—")}</td></tr>`).join("")}</tbody>
+      <tbody>${meds.map((m) => `<tr><td>${escapar(m.nome)}</td><td>${escapar(m.dosagem || "—")}</td><td>${escapar(m.frequencia || "—")}</td><td>${escapar(m.instrucoes || "—")}</td></tr>`).join("")}</tbody>
     </table>
-    <p><strong>Observações gerais:</strong> ${escapar(p.observacoes || p.orientacoes || "—")}</p>`;
+    <p><strong>Observações gerais:</strong> ${escapar(p.observacoes || "—")}</p>`;
 }
 
 /** Abre a prescrição numa janela de impressão — no diálogo, escolha "Salvar como PDF". */
 function imprimirPrescricao(p) {
   const w = window.open("", "_blank");
   if (!w) return toast("Permita pop-ups neste site para gerar o PDF.", "erro");
-  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Prescrição · ${escapar(p.animal)}</title>
+  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Prescrição · ${escapar(p.animal_nome || p.animal)}</title>
     <style>body{font-family:Arial,sans-serif;max-width:760px;margin:40px auto;color:#1b2e2e}h1{color:#1e6767}
     table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ccc}</style></head>
     <body><h1>VetCare · Prescrição veterinária</h1>${htmlPrescricao(p)}
-    <p style="margin-top:70px">______________________________<br>${escapar(p.vet)}</p></body></html>`);
+    <p style="margin-top:70px">______________________________<br>${escapar(p.veterinario_nome || p.vet)}</p></body></html>`);
   w.document.close();
   w.focus();
   w.print();
@@ -49,6 +44,7 @@ function linhaMedicamentoHTML(i) {
  * Popup "Emitir prescrição".
  *   animal:  objeto do animal (vindo da API) — o subtítulo mostra animal, tutor e data
  *   animais: lista para escolher, quando o popup é aberto sem um animal definido
+ *   aoEmitir: callback com a prescrição criada (vinda da API)
  */
 function abrirPrescricao({ animal = null, animais = [], usuario, aoEmitir }) {
   const hoje = isoData(new Date());
@@ -84,16 +80,13 @@ function abrirPrescricao({ animal = null, animais = [], usuario, aoEmitir }) {
         .filter((m) => m.nome);
       if (!medicamentos.length) throw new Error("Informe ao menos um medicamento.");
       const a = animal || animais.find((x) => x.id === Number(form.elements.presc_animal.value));
-      const prescricao = {
-        id: "p" + Date.now(), data: hoje, animal_id: a.id, animal: a.nome, tutor: a.tutor_nome,
-        medicamentos, observacoes: dados.observacoes || "", vet: usuario.nome,
-      };
-      const lista = Local.ler("prescricoes", []);
-      lista.push(prescricao);
-      Local.gravar("prescricoes", lista);
-      imprimirPrescricao(prescricao);
+      if (!a) throw new Error("Selecione o animal.");
+      const criada = await api("/prescricoes", { method: "POST", body: {
+        animal_id: a.id, medicamentos, observacoes: dados.observacoes || null,
+      } });
+      imprimirPrescricao(criada);
       toast("Prescrição emitida.");
-      if (aoEmitir) aoEmitir(prescricao);
+      if (aoEmitir) aoEmitir(criada);
     },
   });
 }
