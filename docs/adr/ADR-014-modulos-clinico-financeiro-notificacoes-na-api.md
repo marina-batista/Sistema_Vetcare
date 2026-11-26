@@ -8,6 +8,7 @@
 
 **Decisão:** foram criados os módulos **Clínico** (REQ 10, 11, 12, 13), **Financeiro** (REQ 14, 15, 17) e **Notificações** (REQ 16) seguindo o mesmo padrão dos módulos existentes — um pacote por módulo, com `modelos.py`, `esquemas.py`, `servicos.py` e `rotas_*.py` (ADR 007). O arquivo `mock.js` foi removido e todas as telas passaram a consumir a API real, com o controle de acesso por perfil/permissão aplicado no backend (ADR 008).
 
+
 **Consequências:**
 
 - Positivas: os 17 requisitos funcionais ficam implementados e persistidos no banco; os dados são compartilhados entre computadores e protegidos pelo controle de acesso.
